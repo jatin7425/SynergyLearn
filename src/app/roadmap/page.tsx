@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -6,10 +7,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Lightbulb, Zap, CheckSquare, Loader2 } from 'lucide-react';
+import { PlusCircle, Lightbulb, Zap, CheckSquare, Loader2, Plus } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { suggestLearningMilestones, type SuggestLearningMilestonesInput } from '@/ai/flows/suggest-milestones';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Milestone {
   id: string;
@@ -17,6 +35,12 @@ interface Milestone {
   description: string;
   status: 'todo' | 'inprogress' | 'done';
 }
+
+const initialMilestones: Milestone[] = [
+  { id: '1', title: 'Understand Core Concepts', description: 'Learn the fundamentals of the subject.', status: 'done' },
+  { id: '2', title: 'Build First Project', description: 'Apply knowledge to a hands-on project.', status: 'inprogress' },
+  { id: '3', title: 'Advanced Topics', description: 'Explore more complex areas.', status: 'todo' },
+];
 
 export default function RoadmapPage() {
   const [goal, setGoal] = useState('');
@@ -26,11 +50,10 @@ export default function RoadmapPage() {
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const { toast } = useToast();
 
-  const [milestones, setMilestones] = useState<Milestone[]>([
-    { id: '1', title: 'Understand Core Concepts', description: 'Learn the fundamentals of the subject.', status: 'done' },
-    { id: '2', title: 'Build First Project', description: 'Apply knowledge to a hands-on project.', status: 'inprogress' },
-    { id: '3', title: 'Advanced Topics', description: 'Explore more complex areas.', status: 'todo' },
-  ]);
+  const [milestones, setMilestones] = useState<Milestone[]>(initialMilestones);
+  const [showAddMilestoneDialog, setShowAddMilestoneDialog] = useState(false);
+  const [newMilestoneTitle, setNewMilestoneTitle] = useState('');
+  const [newMilestoneDescription, setNewMilestoneDescription] = useState('');
 
   const handleSuggestMilestones = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,7 +76,7 @@ export default function RoadmapPage() {
     }
   };
 
-  const addSuggestedMilestone = (title: string) => {
+  const addSuggestedMilestoneToRoadmap = (title: string) => {
     const newMilestone: Milestone = {
       id: String(Date.now()),
       title: title,
@@ -62,9 +85,36 @@ export default function RoadmapPage() {
     };
     setMilestones(prev => [...prev, newMilestone]);
     setSuggestedMilestones(prev => prev.filter(m => m !== title));
-     toast({ title: "Milestone Added", description: `"${title}" added to your roadmap.` });
+    toast({ title: "Milestone Added", description: `"${title}" added to your roadmap.` });
   };
 
+  const handleAddCustomMilestone = (e: FormEvent) => {
+    e.preventDefault();
+    if (!newMilestoneTitle.trim()) {
+      toast({ title: "Title is required", description: "Please enter a title for your milestone.", variant: "destructive"});
+      return;
+    }
+    const newMilestone: Milestone = {
+      id: String(Date.now()),
+      title: newMilestoneTitle,
+      description: newMilestoneDescription,
+      status: 'todo',
+    };
+    setMilestones(prev => [...prev, newMilestone]);
+    toast({ title: "Milestone Added", description: `"${newMilestoneTitle}" added to your roadmap.` });
+    setNewMilestoneTitle('');
+    setNewMilestoneDescription('');
+    setShowAddMilestoneDialog(false);
+  };
+
+  const handleMilestoneStatusChange = (milestoneId: string, newStatus: Milestone['status']) => {
+    setMilestones(prevMilestones =>
+      prevMilestones.map(m =>
+        m.id === milestoneId ? { ...m, status: newStatus } : m
+      )
+    );
+    toast({ title: "Status Updated", description: `Milestone status changed to "${newStatus}".`});
+  };
 
   return (
     <div className="space-y-6">
@@ -72,9 +122,55 @@ export default function RoadmapPage() {
         title="Learning Roadmap"
         description="Plan and track your learning milestones."
         actions={
-          <Button onClick={() => alert('Add new custom milestone (Not implemented)')}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Milestone
-          </Button>
+          <Dialog open={showAddMilestoneDialog} onOpenChange={setShowAddMilestoneDialog}>
+            <DialogTrigger asChild>
+              <Button>
+                <PlusCircle className="mr-2 h-4 w-4" /> Add Custom Milestone
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Add Custom Milestone</DialogTitle>
+                <DialogDescription>
+                  Define a new milestone for your learning roadmap.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddCustomMilestone}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="milestone-title" className="text-right">
+                      Title
+                    </Label>
+                    <Input
+                      id="milestone-title"
+                      value={newMilestoneTitle}
+                      onChange={(e) => setNewMilestoneTitle(e.target.value)}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="milestone-description" className="text-right">
+                      Description
+                    </Label>
+                    <Textarea
+                      id="milestone-description"
+                      value={newMilestoneDescription}
+                      onChange={(e) => setNewMilestoneDescription(e.target.value)}
+                      className="col-span-3"
+                      placeholder="Optional: add more details"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit">Add Milestone</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         }
       />
 
@@ -83,27 +179,33 @@ export default function RoadmapPage() {
           <Card>
             <CardHeader>
               <CardTitle>Current Milestones</CardTitle>
-              <CardDescription>Your planned learning path. Drag and drop to reorder (visual only).</CardDescription>
+              <CardDescription>Your planned learning path.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {milestones.map((milestone) => (
                 <Card key={milestone.id} className="p-4 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-lg">{milestone.title}</h3>
-                    <span className={`px-2 py-1 text-xs rounded-full ${
-                      milestone.status === 'done' ? 'bg-green-100 text-green-700' :
-                      milestone.status === 'inprogress' ? 'bg-blue-100 text-blue-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {milestone.status.charAt(0).toUpperCase() + milestone.status.slice(1)}
-                    </span>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-semibold text-lg">{milestone.title}</h3>
+                      <p className="text-sm text-muted-foreground mt-1">{milestone.description}</p>
+                    </div>
+                    <Select
+                      value={milestone.status}
+                      onValueChange={(value: Milestone['status']) => handleMilestoneStatusChange(milestone.id, value)}
+                    >
+                      <SelectTrigger className="w-[130px] text-xs">
+                        <SelectValue placeholder="Set status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todo">Todo</SelectItem>
+                        <SelectItem value="inprogress">In Progress</SelectItem>
+                        <SelectItem value="done">Done</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-1">{milestone.description}</p>
                   <div className="mt-3 flex gap-2">
                      <Button variant="outline" size="sm" onClick={() => alert(`Edit ${milestone.title} (Not implemented)`)}>Edit</Button>
-                     <Button variant="ghost" size="sm" onClick={() => alert(`Mark ${milestone.title} (Not implemented)`)}>
-                       <CheckSquare className="mr-2 h-4 w-4" /> Mark as...
-                     </Button>
+                     {/* Removed mark as, using select now */}
                   </div>
                 </Card>
               ))}
@@ -152,10 +254,10 @@ export default function RoadmapPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {suggestedMilestones.map((suggestion, index) => (
-                  <div key={index} className="flex items-center justify-between p-2 border rounded-md bg-accent/10">
-                    <p className="text-sm">{suggestion}</p>
-                    <Button size="sm" variant="ghost" onClick={() => addSuggestedMilestone(suggestion)}>
-                      <PlusCircle className="h-4 w-4" />
+                  <div key={index} className="flex items-center justify-between p-2 border rounded-md bg-card hover:bg-accent/10">
+                    <p className="text-sm flex-grow pr-2">{suggestion}</p>
+                    <Button size="sm" variant="ghost" onClick={() => addSuggestedMilestoneToRoadmap(suggestion)} title="Add to Roadmap">
+                      <Plus className="h-4 w-4" />
                     </Button>
                   </div>
                 ))}

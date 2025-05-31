@@ -1,14 +1,28 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText } from 'lucide-react';
+import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText, Save, Info } from 'lucide-react';
 import { useState, useEffect, FormEvent } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 // Mock note data fetching
 const fetchNoteContent = async (id: string): Promise<string | null> => {
@@ -29,8 +43,17 @@ interface Flashcard {
 interface QuizItem {
   id: string;
   question: string;
-  options: string[];
-  correctAnswer: string;
+  // These are placeholders as AI flow currently returns quiz questions as strings
+  options: string[]; 
+  correctAnswer: string; 
+}
+
+interface SavedCollection {
+  id: string;
+  title: string;
+  flashcards: Flashcard[];
+  quizzes: QuizItem[]; // Storing the processed QuizItems
+  createdAt: Date;
 }
 
 export default function GenerateFlashcardsPage({ params }: { params: { id: string } }) {
@@ -38,9 +61,14 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
   const [isLoadingNote, setIsLoadingNote] = useState(true);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
-  const [quizzes, setQuizzes] = useState<QuizItem[]>([]); // For simplicity, quizzes are strings now as per AI flow.
+  const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [showQuizAnswers, setShowQuizAnswers] = useState<Record<string, boolean>>({});
+
+  const [savedCollections, setSavedCollections] = useState<SavedCollection[]>([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [collectionTitle, setCollectionTitle] = useState('');
 
   const { toast } = useToast();
 
@@ -67,30 +95,29 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
     setIsLoadingAI(true);
     setFlashcards([]);
     setQuizzes([]);
+    setShowQuizAnswers({});
     try {
       const input: GenerateFlashcardsAndQuizzesInput = { notes: noteContent };
       const result = await generateFlashcardsAndQuizzes(input);
       
-      // Assuming the AI returns arrays of strings. We'll parse them into structured objects.
-      // This is a simplified parsing. A more robust solution would be for the AI to return structured JSON.
       const parsedFlashcards = result.flashcards.map((fcString, index) => {
-        const parts = fcString.split(':::'); // Example separator: Question:::Answer
+        const parts = fcString.split(':::');
         return {
-          id: `fc-${index}`,
+          id: `fc-${Date.now()}-${index}`,
           question: parts[0]?.trim() || "Question not parsed",
           answer: parts[1]?.trim() || "Answer not parsed",
         };
       });
       setFlashcards(parsedFlashcards);
 
-      // For quizzes, if they are just strings of questions, we map them.
-      // If they are more complex, parsing logic would be needed here.
-      // For now, let's assume quizzes are simple questions for this UI.
       const parsedQuizzes = result.quizzes.map((qString, index) => ({
-        id: `q-${index}`,
+        id: `q-${Date.now()}-${index}`,
         question: qString,
-        options: ["Option A", "Option B", "Option C", "Option D"], // Placeholder options
-        correctAnswer: "Option A" // Placeholder
+        // The AI flow for `generateFlashcardsAndQuizzes` returns simple strings for quizzes.
+        // For a full MCQ experience, the AI flow would need to return structured options and answers.
+        // These are placeholders for demonstration.
+        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"],
+        correctAnswer: "Placeholder Correct Answer" 
       }));
       setQuizzes(parsedQuizzes);
 
@@ -115,6 +142,32 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
     setCurrentFlashcardIndex((prev) => (prev - 1 + flashcards.length) % flashcards.length);
   };
 
+  const toggleQuizAnswer = (quizId: string) => {
+    setShowQuizAnswers(prev => ({ ...prev, [quizId]: !prev[quizId] }));
+  };
+
+  const handleSaveCollection = (e: FormEvent) => {
+    e.preventDefault();
+    if (!collectionTitle.trim()) {
+        toast({ title: "Title required", description: "Please enter a title for your collection.", variant: "destructive"});
+        return;
+    }
+    if (flashcards.length === 0 && quizzes.length === 0) {
+        toast({ title: "Nothing to save", description: "Generate some flashcards or quizzes first.", variant: "destructive"});
+        return;
+    }
+    const newCollection: SavedCollection = {
+        id: `col-${Date.now()}`,
+        title: collectionTitle,
+        flashcards,
+        quizzes,
+        createdAt: new Date(),
+    };
+    setSavedCollections(prev => [newCollection, ...prev]);
+    toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved locally.`});
+    setCollectionTitle('');
+    setShowSaveDialog(false);
+  };
 
   if (isLoadingNote) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
@@ -124,7 +177,7 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={`From note: ${params.id}`}
+        description={`From note: ${params.id}`} // Potentially update to note title if fetched
         actions={
             <Link href={`/notes/${params.id}`} passHref>
                 <Button variant="outline">
@@ -179,24 +232,23 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
         <Card>
           <CardHeader>
             <CardTitle>Quizzes</CardTitle>
-            <CardDescription>Test your knowledge with these questions.</CardDescription>
+            <CardDescription>Test your knowledge with these questions. Full MCQ functionality depends on AI providing options/answers.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {quizzes.map((quiz, index) => (
               <Card key={quiz.id} className="p-4 bg-card shadow-sm">
                 <p className="font-semibold">Q{index + 1}: {quiz.question}</p>
-                {/* Simple display for string quizzes. If AI returns options, map them here. */}
-                {/* For now, this part is a placeholder for more interactive quiz UI */}
                 <div className="mt-2 space-y-1">
                   {quiz.options?.map(opt => (
-                     <Button key={opt} variant="outline" className="w-full justify-start text-left" onClick={() => alert(`Selected: ${opt}`)}>
+                     <Button key={opt} variant="outline" className="w-full justify-start text-left cursor-not-allowed opacity-70" onClick={() => alert(`Selecting options is not fully implemented without structured AI output.`)}>
                        {opt}
                      </Button>
                   ))}
                 </div>
-                <Button variant="link" size="sm" className="mt-2" onClick={() => alert(`Correct Answer: ${quiz.correctAnswer}`)}>
-                    Show Answer (Placeholder)
+                <Button variant="link" size="sm" className="mt-2" onClick={() => toggleQuizAnswer(quiz.id)}>
+                    {showQuizAnswers[quiz.id] ? 'Hide' : 'Show'} Answer (Placeholder)
                 </Button>
+                {showQuizAnswers[quiz.id] && <p className="text-sm text-primary mt-1">{quiz.correctAnswer}</p>}
               </Card>
             ))}
           </CardContent>
@@ -209,10 +261,60 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
             <CardTitle>Save & Export</CardTitle>
           </CardHeader>
           <CardContent>
-            <Button className="w-full" onClick={() => alert("Save to My Collection (Not implemented)")}>
-              <Check className="mr-2 h-4 w-4" /> Save to My Collection
-            </Button>
+            <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+              <DialogTrigger asChild>
+                <Button className="w-full">
+                  <Save className="mr-2 h-4 w-4" /> Save to My Collection
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Save Collection</DialogTitle>
+                  <DialogDescription>Enter a title for this collection of flashcards and quizzes.</DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSaveCollection}>
+                  <div className="py-4">
+                    <Label htmlFor="collection-title">Collection Title</Label>
+                    <Input 
+                      id="collection-title" 
+                      value={collectionTitle} 
+                      onChange={(e) => setCollectionTitle(e.target.value)}
+                      placeholder="e.g., Chapter 1 Review"
+                      required
+                    />
+                  </div>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button type="button" variant="outline">Cancel</Button>
+                    </DialogClose>
+                    <Button type="submit">Save</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
           </CardContent>
+        </Card>
+      )}
+
+      {savedCollections.length > 0 && (
+        <Card>
+            <CardHeader>
+                <CardTitle>Locally Saved Collections (This Page Only)</CardTitle>
+                <CardDescription>These collections are saved in this browser session for this page.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+                {savedCollections.map(col => (
+                    <div key={col.id} className="p-3 border rounded-md">
+                        <h4 className="font-semibold">{col.title}</h4>
+                        <p className="text-xs text-muted-foreground">
+                            {col.flashcards.length} flashcards, {col.quizzes.length} quiz questions. Saved on: {col.createdAt.toLocaleDateString()}
+                        </p>
+                         <Button variant="outline" size="sm" className="mt-2" onClick={() => alert(`Viewing collection "${col.title}" is not yet implemented here. You can see items in "My Flashcards & Quizzes" page once globally saved.`)}>
+                            View (Mock)
+                        </Button>
+                    </div>
+                ))}
+            </CardContent>
         </Card>
       )}
     </div>

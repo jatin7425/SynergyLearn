@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -6,15 +7,46 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PlusCircle, Edit3, Trash2, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useState } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { useToast } from '@/hooks/use-toast';
 
-// Mock data for notes
-const notes = [
+interface Note {
+  id: string;
+  title: string;
+  date: string;
+  summary: string;
+  excerpt: string;
+}
+
+const initialNotes: Note[] = [
   { id: '1', title: 'Introduction to Quantum Physics', date: '2024-07-15', summary: 'Basic concepts of quantum mechanics, wave-particle duality...', excerpt: 'Quantum physics explores the very small...' },
   { id: '2', title: 'Advanced JavaScript Techniques', date: '2024-07-12', summary: 'Closures, prototypes, async/await, and performance optimization.', excerpt: 'JavaScript is a versatile language...' },
   { id: '3', title: 'The History of Ancient Rome', date: '2024-07-10', summary: 'From the founding of Rome to the fall of the Western Roman Empire.', excerpt: 'Ancient Rome a civilization that shaped...' },
 ];
 
 export default function NotesPage() {
+  const [notes, setNotes] = useState<Note[]>(initialNotes);
+  const { toast } = useToast();
+
+  const handleDeleteNote = (noteId: string, noteTitle: string) => {
+    setNotes(currentNotes => currentNotes.filter(note => note.id !== noteId));
+    toast({
+      title: "Note Deleted",
+      description: `"${noteTitle}" has been removed.`,
+    });
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -45,7 +77,7 @@ export default function NotesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {notes.map((note) => (
             <Card key={note.id} className="flex flex-col">
               <CardHeader>
@@ -69,9 +101,27 @@ export default function NotesPage() {
                       <Edit3 className="h-4 w-4" />
                     </Button>
                   </Link>
-                  <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete note" onClick={() => alert(`Delete ${note.title} (Not implemented)`)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete note">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This action cannot be undone. This will permanently delete the note titled "{note.title}".
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => handleDeleteNote(note.id, note.title)} className={Button({variant: "destructive"}).className}>
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </CardContent>
             </Card>
