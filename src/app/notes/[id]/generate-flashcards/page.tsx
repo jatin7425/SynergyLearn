@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText, Save, Info } from 'lucide-react';
-import { useState, useEffect, FormEvent } from 'react';
+import { use, useState, useEffect, FormEvent } from 'react'; // Import 'use'
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+
 
 // Mock note data fetching
 const fetchNoteContent = async (id: string): Promise<string | null> => {
@@ -56,7 +58,10 @@ interface SavedCollection {
   createdAt: Date;
 }
 
-export default function GenerateFlashcardsPage({ params }: { params: { id: string } }) {
+export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
+  const params = use(props.params);
+  const { id } = params;
+
   const [noteContent, setNoteContent] = useState('');
   const [isLoadingNote, setIsLoadingNote] = useState(true);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -73,9 +78,9 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
   const { toast } = useToast();
 
   useEffect(() => {
-    if (params.id) {
+    if (id) {
       setIsLoadingNote(true);
-      fetchNoteContent(params.id).then(content => {
+      fetchNoteContent(id).then(content => {
         if (content) {
           setNoteContent(content);
         } else {
@@ -84,7 +89,7 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
         setIsLoadingNote(false);
       });
     }
-  }, [params.id, toast]);
+  }, [id, toast]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,9 +118,6 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
       const parsedQuizzes = result.quizzes.map((qString, index) => ({
         id: `q-${Date.now()}-${index}`,
         question: qString,
-        // The AI flow for `generateFlashcardsAndQuizzes` returns simple strings for quizzes.
-        // For a full MCQ experience, the AI flow would need to return structured options and answers.
-        // These are placeholders for demonstration.
         options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"],
         correctAnswer: "Placeholder Correct Answer" 
       }));
@@ -169,17 +171,18 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
     setShowSaveDialog(false);
   };
 
-  if (isLoadingNote) {
+  if (isLoadingNote && !id) { // Also check if id is available before showing loader related to note fetching
     return <div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   }
+
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={`From note: ${params.id}`} // Potentially update to note title if fetched
+        description={`From note: ${id}`} 
         actions={
-            <Link href={`/notes/${params.id}`} passHref>
+            <Link href={`/notes/${id}`} passHref>
                 <Button variant="outline">
                     <FileText className="mr-2 h-4 w-4" /> View Original Note
                 </Button>
@@ -320,3 +323,4 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
     </div>
   );
 }
+
