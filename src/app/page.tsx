@@ -1,3 +1,4 @@
+'use client';
 
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
