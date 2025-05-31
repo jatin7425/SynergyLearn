@@ -97,21 +97,21 @@ const howItWorksSteps = [
 
 const testimonials = [
   {
-    avatar: "https://placehold.co/100x100/E0E0E0/333333.png?text=AS",
+    avatar: "https://placehold.co/100x100.png",
     name: "Alex Smith",
     role: "Software Engineer",
     quote: "SynergyLearn's AI tools for generating flashcards and suggesting milestones have been a game-changer for my professional development courses!",
     dataAiHint: "person portrait"
   },
   {
-    avatar: "https://placehold.co/100x100/D1C4E9/4A148C.png?text=MJ",
+    avatar: "https://placehold.co/100x100.png",
     name: "Maria Jones",
     role: "University Student",
     quote: "The collaborative study rooms are fantastic! I can connect with classmates easily, and the roadmap feature keeps me on track with my assignments.",
     dataAiHint: "person portrait"
   },
   {
-    avatar: "https://placehold.co/100x100/C8E6C9/1B5E20.png?text=DP",
+    avatar: "https://placehold.co/100x100.png",
     name: "David Patel",
     role: "Lifelong Learner",
     quote: "I love how organized my learning has become. The analytics page gives me great insights into my study habits. Highly recommend!",
@@ -213,7 +213,7 @@ export default function DashboardPage() {
                 width={1000}
                 height={600}
                 className="rounded-lg shadow-2xl mx-auto"
-                data-ai-hint="learning technology future"
+                data-ai-hint="learning future"
                 priority
               />
             </div>
@@ -449,7 +449,7 @@ export default function DashboardPage() {
             <CardTitle>Discover SynergyLearn Features</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-             <Image src="https://placehold.co/1200x300.png" alt="SynergyLearn feature banner" width={1200} height={300} className="w-full h-auto object-cover" data-ai-hint="learning technology banner" />
+             <Image src="https://placehold.co/1200x300.png" alt="SynergyLearn feature banner" width={1200} height={300} className="w-full h-auto object-cover" data-ai-hint="learning banner" />
         </CardContent>
         <CardFooter className="p-4 md:p-6 bg-muted/50">
             <p className="text-sm text-muted-foreground">

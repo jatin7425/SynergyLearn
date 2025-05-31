@@ -19,8 +19,8 @@ import { useToast } from '@/hooks/use-toast';
 const fetchRoomData = async (id: string) => {
   await new Promise(resolve => setTimeout(resolve, 300)); 
   const rooms: Record<string, { name: string; topic: string; members: Member[] }> = {
-    'room1': { name: 'Physics Study Group', topic: 'Quantum Mechanics', members: [{ id: 'user1', name: 'Alice', avatar: 'https://placehold.co/40x40/FFA500/FFFFFF.png?text=A' }, { id: 'user2', name: 'Bob', avatar: 'https://placehold.co/40x40/008000/FFFFFF.png?text=B' }] },
-    'room2': { name: 'JavaScript Coders', topic: 'React & Next.js', members: [{ id: 'user3', name: 'Charlie', avatar: 'https://placehold.co/40x40/0000FF/FFFFFF.png?text=C' }] },
+    'room1': { name: 'Physics Study Group', topic: 'Quantum Mechanics', members: [{ id: 'user1', name: 'Alice', avatar: 'https://placehold.co/40x40.png' }, { id: 'user2', name: 'Bob', avatar: 'https://placehold.co/40x40.png' }] },
+    'room2': { name: 'JavaScript Coders', topic: 'React & Next.js', members: [{ id: 'user3', name: 'Charlie', avatar: 'https://placehold.co/40x40.png' }] },
   };
   return rooms[id] || { name: 'Unknown Room', topic: 'N/A', members: [] };
 };
@@ -44,7 +44,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingRoomData, setIsLoadingRoomData] = useState(true);
   
-  const currentUser = user ? { id: user.uid, name: user.displayName || user.email?.split('@')[0] || 'You', avatar: user.photoURL || `https://placehold.co/40x40/FF0000/FFFFFF.png?text=${(user.email || 'Y').substring(0,1).toUpperCase()}` } : null;
+  const currentUser = user ? { id: user.uid, name: user.displayName || user.email?.split('@')[0] || 'You', avatar: user.photoURL || `https://placehold.co/40x40.png` } : null;
 
 
   useEffect(() => {
@@ -66,10 +66,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
         
         const initialMessages: Message[] = [];
         if (data.members[0]) {
-            initialMessages.push({ id: 'msg1', userId:data.members[0].id, userName: data.members[0]?.name || 'Alice', userAvatar: data.members[0]?.avatar, text: 'Hey everyone! Ready to discuss Chapter 3?', timestamp: '10:30 AM' });
+            initialMessages.push({ id: 'msg1', userId:data.members[0].id, userName: data.members[0]?.name || 'Alice', userAvatar: data.members[0]?.avatar || 'https://placehold.co/40x40.png', text: 'Hey everyone! Ready to discuss Chapter 3?', timestamp: '10:30 AM' });
         }
         if (data.members[1]) {
-             initialMessages.push({ id: 'msg2', userId:data.members[1].id, userName: data.members[1]?.name || 'Bob', userAvatar: data.members[1]?.avatar, text: 'Sure, I had a few questions on superposition.', timestamp: '10:31 AM' });
+             initialMessages.push({ id: 'msg2', userId:data.members[1].id, userName: data.members[1]?.name || 'Bob', userAvatar: data.members[1]?.avatar || 'https://placehold.co/40x40.png', text: 'Sure, I had a few questions on superposition.', timestamp: '10:31 AM' });
         }
         setMessages(initialMessages);
         setIsLoadingRoomData(false);
@@ -125,7 +125,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
             <div className="flex items-center -space-x-2 mr-2">
               {members.slice(0, 3).map(member => (
                 <Avatar key={member.id} className="h-8 w-8 border-2 border-background">
-                  <AvatarImage src={member.avatar} alt={member.name} data-ai-hint="user avatar" />
+                  <AvatarImage src={member.avatar || 'https://placehold.co/40x40.png'} alt={member.name} data-ai-hint="user avatar" />
                   <AvatarFallback>{member.name.substring(0,1)}</AvatarFallback>
                 </Avatar>
               ))}
@@ -149,7 +149,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
           </CardHeader>
           <CardContent className="flex-grow flex items-center justify-center bg-muted/30 border-2 border-dashed border-muted-foreground/20 rounded-md m-2 md:m-4 p-2">
             <div className="text-center">
-              <Image src="https://placehold.co/400x250.png" alt="Whiteboard placeholder" width={400} height={250} className="opacity-50 rounded max-w-full h-auto" data-ai-hint="whiteboard collaboration" />
+              <Image src="https://placehold.co/400x250.png" alt="Whiteboard placeholder" width={400} height={250} className="opacity-50 rounded max-w-full h-auto" data-ai-hint="whiteboard sketch" />
               <p className="mt-2 md:mt-4 text-sm text-muted-foreground">Whiteboard area - Collaboration tools coming soon!</p>
             </div>
           </CardContent>
@@ -165,7 +165,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
                 <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUser?.id ? 'justify-end' : 'justify-start'}`}>
                   {msg.userId !== currentUser?.id && (
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={msg.userAvatar} data-ai-hint="user avatar" />
+                      <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
                       <AvatarFallback>{msg.userName.substring(0,1)}</AvatarFallback>
                     </Avatar>
                   )}
@@ -175,7 +175,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
                   </div>
                    {msg.userId === currentUser?.id && (
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={msg.userAvatar} data-ai-hint="user avatar" />
+                      <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
                       <AvatarFallback>{msg.userName.substring(0,1)}</AvatarFallback>
                     </Avatar>
                   )}

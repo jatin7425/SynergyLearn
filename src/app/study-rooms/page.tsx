@@ -160,7 +160,7 @@ export default function StudyRoomsPage() {
       {studyRooms.length === 0 ? (
          <Card className="text-center">
           <CardHeader>
-            <Image src="https://placehold.co/300x200.png" alt="Empty study rooms" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="collaboration group" />
+            <Image src="https://placehold.co/300x200.png" alt="Empty study rooms" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="group study" />
             <CardTitle>No Study Rooms Available</CardTitle>
             <CardDescription>Create a new room to start collaborating with others.</CardDescription>
           </CardHeader>

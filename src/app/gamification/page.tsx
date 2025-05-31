@@ -26,6 +26,23 @@ const userStats = {
   nextLevelPoints: 1500,
 };
 
+const LeaderboardPlaceholderSvg = () => (
+  <svg width="300" height="180" viewBox="0 0 300 180" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-4 rounded-md opacity-70" data-ai-hint="leaderboard chart">
+    <rect x="45" y="100" width="40" height="50" rx="3" fill="hsl(var(--muted))"/>
+    <rect x="45" y="60" width="40" height="35" rx="3" fill="hsl(var(--muted))"/>
+    
+    <rect x="95" y="80" width="40" height="70" rx="3" fill="hsl(var(--accent))"/>
+    <rect x="95" y="40" width="40" height="35" rx="3" fill="hsl(var(--accent))"/>
+
+    <rect x="145" y="30" width="40" height="120" rx="3" fill="hsl(var(--primary))"/>
+    
+    <rect x="195" y="70" width="40" height="80" rx="3" fill="hsl(var(--muted))"/>
+    <rect x="195" y="50" width="40" height="15" rx="3" fill="hsl(var(--muted))"/>
+    
+    <line x1="30" y1="150" x2="270" y2="150" stroke="hsl(var(--border))" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+);
+
 export default function GamificationPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -105,7 +122,7 @@ export default function GamificationPage() {
         <CardContent>
           {badges.length === 0 ? (
             <div className="text-center py-8">
-               <Image src="https://placehold.co/200x150.png" alt="No badges illustration" width={200} height={150} className="mx-auto mb-4 rounded-md" data-ai-hint="trophy award empty" />
+               <Image src="https://placehold.co/200x150.png" alt="No badges illustration" width={200} height={150} className="mx-auto mb-4 rounded-md" data-ai-hint="trophy empty" />
               <p className="text-muted-foreground">No badges earned yet. Keep learning to unlock them!</p>
             </div>
           ) : (
@@ -138,7 +155,7 @@ export default function GamificationPage() {
             <CardDescription>See how you rank among fellow learners.</CardDescription>
         </CardHeader>
         <CardContent className="text-center py-10">
-            <Image src="https://placehold.co/300x180.png" alt="Leaderboard placeholder" width={300} height={180} className="mx-auto mb-4 rounded-md opacity-70" data-ai-hint="leaderboard ranking" />
+            <LeaderboardPlaceholderSvg />
             <p className="text-muted-foreground">Challenge yourself and climb the ranks! Leaderboards are under construction.</p>
         </CardContent>
       </Card>

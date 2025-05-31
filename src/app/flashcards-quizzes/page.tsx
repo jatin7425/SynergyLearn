@@ -1,3 +1,4 @@
+
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookOpen, FileQuestion, Eye } from 'lucide-react';
@@ -23,7 +24,7 @@ export default function FlashcardsQuizzesPage() {
       {collections.length === 0 ? (
         <Card className="text-center">
            <CardHeader>
-            <Image src="https://placehold.co/300x200.png" alt="Empty flashcards illustration" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="study cards empty" />
+            <Image src="https://placehold.co/300x200.png" alt="Empty flashcards illustration" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="study empty" />
             <CardTitle>No Collections Yet!</CardTitle>
             <CardDescription>Generate flashcards or quizzes from your notes to start studying.</CardDescription>
           </CardHeader>
