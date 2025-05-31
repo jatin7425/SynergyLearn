@@ -2,7 +2,7 @@
 'use client';
 
 import PageHeader from '@/components/common/page-header';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PlusCircle, Edit3, Trash2, BookOpen } from 'lucide-react';
 import Link from 'next/link';
@@ -116,7 +116,7 @@ export default function NotesPage() {
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => handleDeleteNote(note.id, note.title)} className={Button({variant: "destructive"}).className}>
+                        <AlertDialogAction onClick={() => handleDeleteNote(note.id, note.title)} className={buttonVariants({ variant: "destructive" })}>
                           Delete
                         </AlertDialogAction>
                       </AlertDialogFooter>
