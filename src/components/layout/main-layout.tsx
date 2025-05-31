@@ -1,3 +1,4 @@
+
 'use client';
 
 import type { PropsWithChildren } from 'react';
@@ -14,17 +15,7 @@ import SidebarNav from './sidebar-nav';
 import UserNav from './user-nav';
 import { Button } from '@/components/ui/button';
 import { PanelLeft } from 'lucide-react';
-import Link from 'next/link';
-
-// Custom Logo SVG
-const SynergyLearnLogo = () => (
-  <svg width="32" height="32" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-primary">
-    <path d="M50 10C27.9086 10 10 27.9086 10 50C10 72.0914 27.9086 90 50 90" stroke="currentColor" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M50 10C72.0914 10 90 27.9086 90 50C90 72.0914 72.0914 90 50 90" stroke="currentColor" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 15"/>
-    <circle cx="50" cy="50" r="15" fill="currentColor"/>
-  </svg>
-);
-
+import { MainAppLogo } from '@/components/common/logo'; // Updated import
 
 export default function MainLayout({ children }: PropsWithChildren) {
   const { isMobile, openMobile, setOpenMobile } = useSidebar();
@@ -33,10 +24,7 @@ export default function MainLayout({ children }: PropsWithChildren) {
     <>
       <Sidebar collapsible="icon" variant="sidebar" side="left">
         <SidebarHeader className="flex items-center justify-between p-4">
-          <Link href="/" className="flex items-center gap-2">
-            <SynergyLearnLogo />
-            <h1 className="text-xl font-headline font-semibold group-data-[collapsible=icon]:hidden">SynergyLearn</h1>
-          </Link>
+          <MainAppLogo /> {/* Updated usage */}
           <div className="group-data-[collapsible=icon]:hidden">
             <SidebarTrigger />
           </div>
