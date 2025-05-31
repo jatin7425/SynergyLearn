@@ -1,7 +1,15 @@
+
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Award, ShieldCheck, Star, TrendingUp, Zap } from 'lucide-react';
+import { Award, ShieldCheck, Star, TrendingUp, Zap, Loader2, AlertCircle } from 'lucide-react';
 import Image from 'next/image';
+import { Button } from '@/components/ui/button';
 
 const badges = [
   { id: 'b1', name: 'Early Bird', description: 'Completed a task before 8 AM.', icon: Zap, achieved: true, color: 'text-yellow-500' },
@@ -19,6 +27,37 @@ const userStats = {
 };
 
 export default function GamificationPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to view your rewards.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
+    }
+  }, [user, authLoading, router, pathname, toast]);
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view your rewards.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
+
   const progressToNextLevel = (userStats.points / userStats.nextLevelPoints) * 100;
 
   return (

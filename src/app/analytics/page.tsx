@@ -1,11 +1,17 @@
 
 'use client';
 
+import { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Bar, Line, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList, BarChart, LineChart, PieChart } from 'recharts';
-import { Activity, BookOpen, CheckCircle, Clock, Target } from 'lucide-react';
+import { Activity, BookOpen, CheckCircle, Clock, Target, Loader2, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
 
 const weeklyProgressData = [
   { day: 'Mon', hours: 2, tasks: 3 },
@@ -32,12 +38,43 @@ const subjectTimeData = [
 const overallStats = [
     { title: "Total Study Hours", value: "125", icon: Clock, trend: "+15% this month" },
     { title: "Completed Milestones", value: "8", icon: Target, trend: "+2 last week" },
-    { title: "Notes Taken", value: "47", icon: BookOpen, trend: "+5 this week" }, // This could be dynamic in future
+    { title: "Notes Taken", value: "47", icon: BookOpen, trend: "+5 this week" }, 
     { title: "Avg. Task Completion", value: "85%", icon: CheckCircle, trend: "Consistent" },
 ];
 
 
 export default function AnalyticsPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to view your analytics.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
+    }
+  }, [user, authLoading, router, pathname, toast]);
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view your analytics.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -90,18 +127,18 @@ export default function AnalyticsPage() {
             <CardDescription>How your study time is distributed.</CardDescription>
           </CardHeader>
           <CardContent className="h-[300px] md:h-[350px] flex justify-center items-center">
-             <ChartContainer config={{}} className="h-full w-full max-w-xs md:max-w-sm"> {/* Max width for pie chart */}
+             <ChartContainer config={{}} className="h-full w-full max-w-xs md:max-w-sm"> 
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie data={subjectTimeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius="80%" > {/* Relative outerRadius */}
+                  <Pie data={subjectTimeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius="80%" > 
                     {subjectTimeData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.fill} />
                     ))}
                      <LabelList
                         dataKey="name"
-                        position="outside" // Better for readability
-                        className="fill-foreground" // Use foreground for better contrast
+                        position="outside" 
+                        className="fill-foreground" 
                         stroke="none"
                         fontSize={12}
                         formatter={(value: string) => value}
@@ -128,8 +165,8 @@ export default function AnalyticsPage() {
                     <p className="text-sm text-muted-foreground">You've shown consistent study hours in JavaScript. Consider tackling a more complex project to solidify your skills.</p>
                 </div>
             </div>
-            <div className="flex items-start p-3 border rounded-md bg-card hover:shadow-md transition-shadow"> {/* Changed from destructive */}
-                <Clock className="h-5 w-5 text-yellow-500 dark:text-yellow-400 mr-3 mt-1 flex-shrink-0" /> {/* Adjusted icon color */}
+            <div className="flex items-start p-3 border rounded-md bg-card hover:shadow-md transition-shadow"> 
+                <Clock className="h-5 w-5 text-yellow-500 dark:text-yellow-400 mr-3 mt-1 flex-shrink-0" /> 
                 <div>
                     <p className="font-semibold">Low Activity in History</p>
                     <p className="text-sm text-muted-foreground">Your activity in History has been low this month. Try scheduling short, focused review sessions or use flashcards for key dates and events.</p>

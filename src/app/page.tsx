@@ -1,15 +1,19 @@
 
 'use client';
 
+import { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork } from 'lucide-react';
+import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart } from 'recharts'; // Corrected import for BarChart
+import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart } from 'recharts';
 
 const chartData = [
   { month: "January", tasks: 12, goals: 2 },
@@ -33,6 +37,37 @@ const chartConfig = {
 
 
 export default function DashboardPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to access the dashboard.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
+    }
+  }, [user, authLoading, router, pathname, toast]);
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view the dashboard.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -93,7 +128,7 @@ export default function DashboardPage() {
           <CardContent className="h-[300px] md:h-[350px]">
             <ChartContainer config={chartConfig} className="h-full w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}> {/* Corrected usage */}
+                <BarChart data={chartData}>
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="month"

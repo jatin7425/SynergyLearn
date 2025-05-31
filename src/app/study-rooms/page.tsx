@@ -4,10 +4,13 @@
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PlusCircle, Users, LogIn, Edit, Plus } from 'lucide-react';
+import { PlusCircle, Users, LogIn, Edit, Plus, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
+
 
 interface StudyRoom {
   id: string;
@@ -37,11 +40,23 @@ const initialStudyRooms: StudyRoom[] = [
 ];
 
 export default function StudyRoomsPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+  
   const [studyRooms, setStudyRooms] = useState<StudyRoom[]>(initialStudyRooms);
   const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomTopic, setNewRoomTopic] = useState('');
-  const { toast } = useToast();
+  
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to access study rooms.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
+    }
+  }, [user, authLoading, router, pathname, toast]);
 
   const handleCreateRoom = (e: FormEvent) => {
     e.preventDefault();
@@ -53,7 +68,7 @@ export default function StudyRoomsPage() {
       id: `room${Date.now()}`,
       name: newRoomName,
       topic: newRoomTopic,
-      members: 1, // Creator
+      members: 1, 
       active: true,
     };
     setStudyRooms(prev => [newRoom, ...prev]);
@@ -62,6 +77,25 @@ export default function StudyRoomsPage() {
     setNewRoomTopic('');
     setShowCreateRoomDialog(false);
   };
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view study rooms.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

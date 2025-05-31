@@ -7,11 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, Lightbulb, Zap, CheckSquare, Loader2, Plus } from 'lucide-react';
+import { PlusCircle, Lightbulb, Zap, CheckSquare, Loader2, Plus, AlertCircle } from 'lucide-react';
 import { useState, type FormEvent, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { suggestLearningMilestones, type SuggestLearningMilestonesInput } from '@/ai/flows/suggest-milestones';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Dialog,
   DialogContent,
@@ -44,12 +45,16 @@ const initialMilestones: Milestone[] = [
 ];
 
 export default function RoadmapPage() {
-  const [goal, setGoal] = useState(''); // For AI suggestions input
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
+  const [goal, setGoal] = useState(''); 
   const [currentSkills, setCurrentSkills] = useState('');
   const [learningPreferences, setLearningPreferences] = useState('');
   const [suggestedAIMilestones, setSuggestedAIMilestones] = useState<string[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
-  const { toast } = useToast();
   const searchParams = useSearchParams();
 
   const [milestones, setMilestones] = useState<Milestone[]>(initialMilestones);
@@ -58,49 +63,57 @@ export default function RoadmapPage() {
   const [newMilestoneDescription, setNewMilestoneDescription] = useState('');
 
   useEffect(() => {
-    const singleTitle = searchParams.get('addMilestoneTitle');
-    const singleDescription = searchParams.get('addMilestoneDescription');
-    const multipleTitles = searchParams.getAll('title[]');
-    const multipleDescriptions = searchParams.getAll('description[]');
-    const newGoalFromQuery = searchParams.get('newGoal');
-
-    let addedMilestones = false;
-    const newMilestonesFromQuery: Milestone[] = [];
-
-    if (newGoalFromQuery && !goal) { // Check !goal to avoid overwriting if user types/already set
-      setGoal(newGoalFromQuery); // Pre-fill the AI suggestion goal input
-      toast({ title: "Learning Goal Set", description: `Continuing with goal: "${newGoalFromQuery}". You can now add milestones or get AI suggestions.` });
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to access your roadmap.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
     }
+  }, [user, authLoading, router, pathname, toast]);
 
-    if (singleTitle) {
-      newMilestonesFromQuery.push({
-        id: String(Date.now()) + Math.random(),
-        title: singleTitle,
-        description: singleDescription || "AI Suggested Milestone",
-        status: 'todo',
-      });
-      addedMilestones = true;
-    }
-    
-    if (multipleTitles.length > 0) {
-      multipleTitles.forEach((title, index) => {
+  useEffect(() => {
+    // This effect runs after the auth check ensures user exists or redirect has happened
+    if (user) {
+        const singleTitle = searchParams.get('addMilestoneTitle');
+        const singleDescription = searchParams.get('addMilestoneDescription');
+        const multipleTitles = searchParams.getAll('title[]');
+        const multipleDescriptions = searchParams.getAll('description[]');
+        const newGoalFromQuery = searchParams.get('newGoal');
+
+        let addedMilestones = false;
+        const newMilestonesFromQuery: Milestone[] = [];
+
+        if (newGoalFromQuery && !goal) { 
+        setGoal(newGoalFromQuery); 
+        toast({ title: "Learning Goal Set", description: `Continuing with goal: "${newGoalFromQuery}". You can now add milestones or get AI suggestions.` });
+        }
+
+        if (singleTitle) {
         newMilestonesFromQuery.push({
-          id: String(Date.now()) + Math.random() + index,
-          title: title,
-          description: multipleDescriptions[index] || "AI Suggested Milestone",
-          status: 'todo',
+            id: String(Date.now()) + Math.random(),
+            title: singleTitle,
+            description: singleDescription || "AI Suggested Milestone",
+            status: 'todo',
         });
-      });
-      addedMilestones = true;
-    }
+        addedMilestones = true;
+        }
+        
+        if (multipleTitles.length > 0) {
+        multipleTitles.forEach((title, index) => {
+            newMilestonesFromQuery.push({
+            id: String(Date.now()) + Math.random() + index,
+            title: title,
+            description: multipleDescriptions[index] || "AI Suggested Milestone",
+            status: 'todo',
+            });
+        });
+        addedMilestones = true;
+        }
 
-    if (addedMilestones) {
-      setMilestones(prev => [...prev, ...newMilestonesFromQuery]);
-      toast({ title: "Milestones Added", description: "Suggested milestones have been added to your roadmap." });
-      // To prevent re-adding on refresh, ideally clear query params here, but that requires router.replace.
-      // For simplicity, we'll leave them or they clear on next navigation.
+        if (addedMilestones) {
+        setMilestones(prev => [...prev, ...newMilestonesFromQuery]);
+        toast({ title: "Milestones Added", description: "Suggested milestones have been added to your roadmap." });
+        }
     }
-  }, [searchParams, toast, goal]); // Added goal to dependency array
+  }, [searchParams, toast, goal, user]); 
 
 
   const handleSuggestMilestones = async (e: FormEvent) => {
@@ -132,7 +145,7 @@ export default function RoadmapPage() {
       status: 'todo',
     };
     setMilestones(prev => [...prev, newMilestone]);
-    setSuggestedAIMilestones(prev => prev.filter(m => m !== title)); // Remove from suggestions list
+    setSuggestedAIMilestones(prev => prev.filter(m => m !== title)); 
     toast({ title: "Milestone Added", description: `"${title}" added to your roadmap.` });
   };
 
@@ -163,6 +176,25 @@ export default function RoadmapPage() {
     );
     toast({ title: "Status Updated", description: `Milestone status changed to "${newStatus}".`});
   };
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view your roadmap.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

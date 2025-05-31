@@ -1,13 +1,16 @@
+
 'use client';
 
+import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, BookOpen, ListChecks } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, BookOpen, ListChecks, AlertCircle } from 'lucide-react';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
-import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 interface Flashcard {
@@ -17,13 +20,24 @@ interface Flashcard {
 }
 
 export default function AiFlashcardGeneratorPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
   const [notesInput, setNotesInput] = useState('');
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
-  const [quizzes, setQuizzes] = useState<string[]>([]); // AI flow returns string array for quizzes
+  const [quizzes, setQuizzes] = useState<string[]>([]); 
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
-  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      toast({ title: "Authentication Required", description: "Please log in to use the AI Flashcard Generator.", variant: "destructive" });
+      router.push(`/login?redirect=${pathname}`);
+    }
+  }, [user, authLoading, router, pathname, toast]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,7 +61,7 @@ export default function AiFlashcardGeneratorPage() {
         };
       });
       setFlashcards(parsedFlashcards);
-      setQuizzes(result.quizzes); // Quizzes are strings from AI flow
+      setQuizzes(result.quizzes); 
 
       setCurrentFlashcardIndex(0);
       setShowAnswer(false);
@@ -69,6 +83,25 @@ export default function AiFlashcardGeneratorPage() {
     setShowAnswer(false);
     setCurrentFlashcardIndex((prev) => (prev - 1 + flashcards.length) % flashcards.length);
   };
+
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to use the AI Flashcard Generator.</p>
+        <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

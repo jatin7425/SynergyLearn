@@ -10,24 +10,13 @@ import { use, useState, useEffect, FormEvent } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 
 interface Flashcard {
   id: string;
@@ -50,7 +39,6 @@ interface SavedCollection {
   createdAt: Date;
 }
 
-// Function to fetch actual note content from Firebase
 const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<string | null> => {
   if (!userId || !noteId) return null;
   try {
@@ -70,9 +58,12 @@ const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Pro
 export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(props.params);
   const { id: noteId } = resolvedParams;
-  const router = useRouter();
-
+  
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+
   const [noteContent, setNoteContent] = useState('');
   const [originalNoteTitle, setOriginalNoteTitle] = useState('');
   const [isLoadingNote, setIsLoadingNote] = useState(true);
@@ -87,13 +78,11 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [collectionTitle, setCollectionTitle] = useState('');
 
-  const { toast } = useToast();
-
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
       toast({ title: "Authentication Required", description: "Please log in to generate study materials.", variant: "destructive" });
-      router.push('/login');
+      router.push(`/login?redirect=${pathname}`);
       return;
     }
 
@@ -102,7 +91,6 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       fetchNoteContentFromFirebase(user.uid, noteId).then(content => {
         if (content) {
           setNoteContent(content);
-          // Attempt to get note title as well for context (optional)
           const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
           getDoc(noteDocRef).then(docSnap => {
             if (docSnap.exists()) setOriginalNoteTitle(docSnap.data()?.title || 'Note ' + noteId);
@@ -110,7 +98,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
           });
         } else {
           toast({ title: "Note content not found", description:"Could not load content for this note.", variant: "destructive" });
-          setOriginalNoteTitle('Note ' + noteId); // fallback title
+          setOriginalNoteTitle('Note ' + noteId); 
         }
         setIsLoadingNote(false);
       });
@@ -118,7 +106,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         toast({ title: "Note ID missing", variant: "destructive" });
         setIsLoadingNote(false);
     }
-  }, [noteId, user, authLoading, toast, router]);
+  }, [noteId, user, authLoading, toast, router, pathname]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
@@ -147,8 +135,8 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       const parsedQuizzes = result.quizzes.map((qString, index) => ({
         id: `q-${Date.now()}-${index}`,
         question: qString,
-        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"], // AI flow needs to be updated for MCQs
-        correctAnswer: "Placeholder Correct Answer" // AI flow needs to be updated
+        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"], 
+        correctAnswer: "Placeholder Correct Answer" 
       }));
       setQuizzes(parsedQuizzes);
 
@@ -194,40 +182,38 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         quizzes,
         createdAt: new Date(),
     };
-    setSavedCollections(prev => [newCollection, ...prev]); // Saved locally for this session
+    setSavedCollections(prev => [newCollection, ...prev]); 
     toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved locally for this session.`});
     setCollectionTitle('');
     setShowSaveDialog(false);
-    // TODO: Implement saving to Firebase user's collections
   };
   
-  if (authLoading) {
-    return <div className="flex justify-center items-center h-screen"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
+  if (authLoading || (user && isLoadingNote && noteId)) { // Show loader if auth is loading OR (user exists AND note is loading AND noteId is present)
+    return (
+        <div className="flex justify-center items-center min-h-screen">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+    );
   }
 
-  if (!user && !authLoading) {
+  if (!user && !authLoading) { // If auth is done, but no user
     return (
-        <div className="flex flex-col items-center justify-center h-screen p-4 text-center">
+        <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
             <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
             <p className="text-muted-foreground mb-4">You need to be logged in to generate study materials.</p>
-            <Button onClick={() => router.push('/login')}>Go to Login</Button>
+            <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
         </div>
     );
   }
   
-  if (isLoadingNote && noteId) { 
-    return <div className="flex justify-center items-center h-screen"><Loader2 className="h-8 w-8 animate-spin text-primary" /> Loading Note...</div>;
-  }
-
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : `From note ID: ${noteId}`}
+        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : (noteId ? `From note ID: ${noteId}`: 'Generate study materials')}
         actions={
-            <Link href={`/notes/${noteId}`} passHref>
+            noteId && <Link href={`/notes/${noteId}`} passHref>
                 <Button variant="outline">
                     <FileText className="mr-2 h-4 w-4" /> View Original Note
                 </Button>
@@ -241,12 +227,12 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
           <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes.</CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoadingNote ? (
+          {isLoadingNote && noteId ? ( // Check noteId here to avoid showing loader if on general page without a note context
              <div className="flex justify-center items-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
           ) : (
             <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50 min-h-[200px]" />
           )}
-          <Button onClick={handleGenerate} disabled={isLoadingAI || isLoadingNote || !noteContent} className="mt-4 w-full">
+          <Button onClick={handleGenerate} disabled={isLoadingAI || (isLoadingNote && !!noteId) || !noteContent} className="mt-4 w-full">
             {isLoadingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
             {isLoadingAI ? 'Generating...' : 'Generate Flashcards & Quizzes'}
           </Button>

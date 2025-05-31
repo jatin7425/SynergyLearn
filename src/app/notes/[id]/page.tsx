@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 
 interface NoteData {
   title: string;
@@ -25,21 +25,23 @@ interface NoteData {
 export default function NoteDetailPage({ params }: { params: { id: string } }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // For note data loading
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const noteId = params.id;
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading) return; // Wait for auth state
     if (!user) {
       toast({ title: "Authentication Required", description: "Please log in to view or edit notes.", variant: "destructive" });
-      router.push('/login');
+      router.push(`/login?redirect=${pathname}`); // Use pathname for accurate redirect
       return;
     }
 
+    // If user is authenticated, proceed to fetch or initialize note
     if (noteId && noteId !== 'new') {
       setIsLoading(true);
       const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
@@ -50,7 +52,7 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
           setContent(noteData.content);
         } else {
           toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
-          router.push('/notes');
+          router.push('/notes'); // Redirect to notes list if specific note not found
         }
         setIsLoading(false);
       }).catch(error => {
@@ -59,13 +61,16 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
         setIsLoading(false);
         router.push('/notes');
       });
-    } else {
-      // For 'new' note, initialize with empty fields
+    } else if (noteId === 'new') {
       setTitle('');
       setContent('');
       setIsLoading(false);
+    } else {
+      // Invalid noteId case, though unlikely if routing is correct
+      router.push('/notes');
+      setIsLoading(false);
     }
-  }, [noteId, user, authLoading, toast, router]);
+  }, [noteId, user, authLoading, toast, router, pathname]);
 
   const handleSaveNote = async () => {
     if (!user) {
@@ -79,7 +84,7 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
 
     setIsSaving(true);
     const noteDataToSave = {
-      title: title.trim() || "Untitled Note", // Default title if empty
+      title: title.trim() || "Untitled Note", 
       content: content,
       updatedAt: serverTimestamp(),
     };
@@ -92,10 +97,10 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
           createdAt: serverTimestamp(),
         });
         toast({ title: "Note Created!", description: `"${noteDataToSave.title}" has been saved successfully.` });
-        router.push(`/notes/${newNoteRef.id}`); // Redirect to the new note's page
+        router.push(`/notes/${newNoteRef.id}`); 
       } else {
         const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
-        await setDoc(noteDocRef, noteDataToSave, { merge: true }); // Use setDoc with merge to update or create if somehow deleted
+        await setDoc(noteDocRef, noteDataToSave, { merge: true }); 
         toast({ title: "Note Updated!", description: `"${noteDataToSave.title}" has been updated successfully.` });
       }
     } catch (error) {
@@ -106,41 +111,40 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
     }
   };
 
-  if (authLoading || isLoading) {
+  if (authLoading || isLoading) { // Show loader if auth is loading OR note data is loading
     return (
-      <div className="flex justify-center items-center h-screen">
+      <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
   }
   
-  if (!user && !authLoading) {
-    // This case should ideally be handled by the useEffect redirect, but as a fallback:
+  if (!user && !authLoading) { // This handles the case where auth is done, user is null
     return (
-        <div className="flex flex-col items-center justify-center h-screen p-4 text-center">
+        <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
             <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
             <p className="text-muted-foreground mb-4">You need to be logged in to manage notes.</p>
-            <Button onClick={() => router.push('/login')}>Go to Login</Button>
+            <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
         </div>
     );
   }
 
-
+  // User is authenticated, proceed to render note editor
   return (
     <div className="space-y-6">
       <PageHeader
         title={noteId === 'new' ? 'Create New Note' : title || 'Edit Note'}
-        description={noteId === 'new' ? 'Craft your new note here.' : `Last updated: ${new Date().toLocaleDateString()}`}
+        description={noteId === 'new' ? 'Craft your new note here.' : `Last updated: ${new Date().toLocaleDateString()}`} // Consider showing actual updatedAt
         actions={
           <div className="flex flex-col sm:flex-row gap-2">
-            <Button onClick={handleSaveNote} disabled={isSaving || isLoading}>
+            <Button onClick={handleSaveNote} disabled={isSaving}>
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               {isSaving ? 'Saving...' : (noteId === 'new' ? 'Save Note' : 'Update Note')}
             </Button>
             {noteId !== 'new' && (
              <Link href={`/notes/${noteId}/generate-flashcards`} passHref>
-                <Button variant="outline" disabled={isLoading}>
+                <Button variant="outline">
                     <BookOpen className="mr-2 h-4 w-4" /> Flashcards/Quiz
                 </Button>
             </Link>
@@ -157,7 +161,7 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto"
-              disabled={isSaving || isLoading}
+              disabled={isSaving}
             />
           </div>
           <div>
@@ -167,7 +171,7 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
               onChange={(e) => setContent(e.target.value)}
               className="min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50"
               rows={15}
-              disabled={isSaving || isLoading}
+              disabled={isSaving}
             />
           </div>
         </CardContent>
