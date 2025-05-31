@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -9,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { User, Bell, Palette, Brain, Lock, Save } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function SettingsPage() {
@@ -19,13 +20,46 @@ export default function SettingsPage() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
 
+  const [mounted, setMounted] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    setMounted(true);
+    const storedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    setCurrentTheme(storedTheme || systemTheme);
+  }, []);
+
+  useEffect(() => {
+    if (mounted) {
+      if (currentTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+      localStorage.setItem('theme', currentTheme);
+    }
+  }, [currentTheme, mounted]);
+
   const handleSaveChanges = () => {
     // Simulate saving settings
     toast({
       title: "Settings Saved",
       description: "Your preferences have been updated.",
     });
+    // Here you would also save learningStyle, preferredTopics, etc.
   };
+
+  const handleThemeToggle = (checked: boolean) => {
+    setCurrentTheme(checked ? 'dark' : 'light');
+  };
+
+  if (!mounted) {
+    // To prevent hydration mismatch, you might render a placeholder or null
+    // until the client-side useEffect has run. Or, ensure the initial server render
+    // matches the first client render (which can be tricky with themes).
+    // For simplicity here, we let it render with default and then update.
+  }
 
   return (
     <div className="space-y-6">
@@ -55,7 +89,7 @@ export default function SettingsPage() {
                         <Label htmlFor="email">Email</Label>
                         <Input id="email" type="email" defaultValue="user@example.com" />
                     </div>
-                    <Button variant="outline" className="w-full">Change Password</Button>
+                    <Button variant="outline" className="w-full" onClick={() => toast({title: "Feature not implemented", description: "Password change is not yet available."})}>Change Password</Button>
                 </CardContent>
             </Card>
              <Card>
@@ -70,16 +104,14 @@ export default function SettingsPage() {
                                 Toggle between light and dark themes.
                             </span>
                         </Label>
-                        <Switch
-                            id="darkMode"
-                            checked={document.documentElement.classList.contains('dark')}
-                            onCheckedChange={(checked) => {
-                                if (checked) document.documentElement.classList.add('dark');
-                                else document.documentElement.classList.remove('dark');
-                                localStorage.setItem('theme', checked ? 'dark' : 'light');
-                            }}
-                            aria-label="Toggle dark mode"
-                        />
+                        {mounted && ( // Only render Switch when mounted to ensure consistent state
+                          <Switch
+                              id="darkMode"
+                              checked={currentTheme === 'dark'}
+                              onCheckedChange={handleThemeToggle}
+                              aria-label="Toggle dark mode"
+                          />
+                        )}
                     </div>
                     {/* More appearance settings can go here */}
                 </CardContent>
@@ -171,9 +203,9 @@ export default function SettingsPage() {
                     <CardTitle className="flex items-center"><Lock className="mr-2 h-5 w-5 text-primary" /> Account & Security</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <Button variant="outline" className="w-full">Manage Subscription (Not implemented)</Button>
-                    <Button variant="outline" className="w-full">View Privacy Policy</Button>
-                    <Button variant="destructive" className="w-full">Delete Account (Not implemented)</Button>
+                    <Button variant="outline" className="w-full" onClick={() => toast({title: "Feature not implemented", description: "Subscription management is not yet available."})}>Manage Subscription (Not implemented)</Button>
+                    <Button variant="outline" className="w-full" onClick={() => toast({title: "Placeholder", description: "Privacy Policy link would go here."})}>View Privacy Policy</Button>
+                    <Button variant="destructive" className="w-full" onClick={() => toast({title: "Feature not implemented", description: "Account deletion is not yet available."})}>Delete Account (Not implemented)</Button>
                 </CardContent>
             </Card>
         </div>
