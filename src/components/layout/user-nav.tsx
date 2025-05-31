@@ -1,3 +1,4 @@
+
 'use client';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -11,12 +12,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { LogOut, User, Settings, Sun, Moon } from 'lucide-react';
+import { LogOut, User, Settings, Sun, Moon, LogIn, UserPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import Link from 'next/link';
+import { useToast } from '@/hooks/use-toast';
 
 export default function UserNav() {
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const { user, signOut, loading } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     setMounted(true);
@@ -36,8 +42,23 @@ export default function UserNav() {
     }
   }, [theme, mounted]);
 
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      toast({ title: 'Signed Out', description: 'You have been successfully signed out.' });
+    } catch (error) {
+      toast({ title: 'Sign Out Failed', description: (error as Error).message, variant: 'destructive' });
+    }
+  };
+
   if (!mounted) {
-    return null; 
+    // Render a placeholder or null during SSR/hydration mismatch phase
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-9 w-9 rounded-full bg-muted animate-pulse" />
+        <div className="h-9 w-9 rounded-full bg-muted animate-pulse" />
+      </div>
+    );
   }
 
   const toggleTheme = () => {
@@ -49,42 +70,63 @@ export default function UserNav() {
       <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
         {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="relative h-9 w-9 rounded-full">
-            <Avatar className="h-9 w-9">
-              <AvatarImage src="https://placehold.co/100x100.png" alt="User avatar" data-ai-hint="user avatar" />
-              <AvatarFallback>SL</AvatarFallback>
-            </Avatar>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align="end" forceMount>
-          <DropdownMenuLabel className="font-normal">
-            <div className="flex flex-col space-y-1">
-              <p className="text-sm font-medium leading-none">Synergy User</p>
-              <p className="text-xs leading-none text-muted-foreground">
-                user@example.com
-              </p>
-            </div>
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem>
-              <User className="mr-2 h-4 w-4" />
-              <span>Profile</span>
+      {loading ? (
+         <div className="h-9 w-9 rounded-full bg-muted animate-pulse" />
+      ) : user ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="relative h-9 w-9 rounded-full">
+              <Avatar className="h-9 w-9">
+                <AvatarImage src={user.photoURL || "https://placehold.co/100x100.png"} alt="User avatar" data-ai-hint="user avatar" />
+                <AvatarFallback>{user.email ? user.email.substring(0, 2).toUpperCase() : 'U'}</AvatarFallback>
+              </Avatar>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56" align="end" forceMount>
+            <DropdownMenuLabel className="font-normal">
+              <div className="flex flex-col space-y-1">
+                <p className="text-sm font-medium leading-none">Synergy User</p>
+                <p className="text-xs leading-none text-muted-foreground">
+                  {user.email}
+                </p>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <Link href="/settings" passHref>
+                <DropdownMenuItem>
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile</span>
+                </DropdownMenuItem>
+              </Link>
+              <Link href="/settings" passHref>
+                <DropdownMenuItem>
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Settings</span>
+                </DropdownMenuItem>
+              </Link>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleSignOut}>
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Log out</span>
             </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Settings className="mr-2 h-4 w-4" />
-              <span>Settings</span>
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem>
-            <LogOut className="mr-2 h-4 w-4" />
-            <span>Log out</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Link href="/login" passHref>
+            <Button variant="outline" size="sm">
+              <LogIn className="mr-2 h-4 w-4" /> Login
+            </Button>
+          </Link>
+          <Link href="/signup" passHref>
+            <Button size="sm">
+             <UserPlus className="mr-2 h-4 w-4" /> Sign Up
+            </Button>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

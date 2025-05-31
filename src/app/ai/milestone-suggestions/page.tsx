@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -11,6 +12,7 @@ import { useState, type FormEvent } from 'react';
 import { suggestLearningMilestones, type SuggestLearningMilestonesInput } from '@/ai/flows/suggest-milestones';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 export default function AiMilestoneSuggestionsPage() {
   const [goal, setGoal] = useState('');
@@ -19,6 +21,7 @@ export default function AiMilestoneSuggestionsPage() {
   const [suggestedMilestones, setSuggestedMilestones] = useState<string[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const { toast } = useToast();
+  const router = useRouter();
 
   const handleSuggestMilestones = async (e: FormEvent) => {
     e.preventDefault();
@@ -40,6 +43,22 @@ export default function AiMilestoneSuggestionsPage() {
       setIsLoadingSuggestions(false);
     }
   };
+
+  const addSuggestionToRoadmap = (suggestion: string) => {
+    const encodedTitle = encodeURIComponent(suggestion);
+    const encodedDescription = encodeURIComponent("AI Suggested Milestone");
+    router.push(`/roadmap?addMilestoneTitle=${encodedTitle}&addMilestoneDescription=${encodedDescription}`);
+  };
+
+  const addAllSuggestionsToRoadmap = () => {
+    if (suggestedMilestones.length === 0) {
+      toast({ title: "No suggestions to add", description: "Generate some suggestions first.", variant: "destructive" });
+      return;
+    }
+    const milestonesQuery = suggestedMilestones.map(s => `title[]=${encodeURIComponent(s)}&description[]=AI+Suggested+Milestone`).join('&');
+    router.push(`/roadmap?${milestonesQuery}`);
+  };
+
 
   return (
     <div className="space-y-6">
@@ -109,7 +128,7 @@ export default function AiMilestoneSuggestionsPage() {
                 {suggestedMilestones.map((suggestion, index) => (
                   <li key={index} className="flex items-start justify-between p-3 border rounded-md bg-card hover:bg-accent/10 transition-colors">
                     <p className="text-sm flex-grow pr-2">{index + 1}. {suggestion}</p>
-                    <Button size="sm" variant="ghost" onClick={() => alert(`Add "${suggestion}" to roadmap (Not implemented)`)} title="Add to Roadmap">
+                    <Button size="sm" variant="ghost" onClick={() => addSuggestionToRoadmap(suggestion)} title="Add to Roadmap">
                       <PlusCircle className="h-4 w-4" />
                     </Button>
                   </li>
@@ -119,11 +138,9 @@ export default function AiMilestoneSuggestionsPage() {
           </CardContent>
            {suggestedMilestones.length > 0 && (
             <CardContent className="border-t pt-4">
-                 <Link href="/roadmap" passHref>
-                    <Button className="w-full">
-                        <ListChecks className="mr-2 h-4 w-4" /> Add to My Roadmap (Not implemented)
-                    </Button>
-                </Link>
+                 <Button className="w-full" onClick={addAllSuggestionsToRoadmap}>
+                    <ListChecks className="mr-2 h-4 w-4" /> Add All to My Roadmap
+                </Button>
             </CardContent>
            )}
         </Card>
