@@ -44,10 +44,10 @@ const initialMilestones: Milestone[] = [
 ];
 
 export default function RoadmapPage() {
-  const [goal, setGoal] = useState('');
+  const [goal, setGoal] = useState(''); // For AI suggestions input
   const [currentSkills, setCurrentSkills] = useState('');
   const [learningPreferences, setLearningPreferences] = useState('');
-  const [suggestedAIMilestones, setSuggestedAIMilestones] = useState<string[]>([]); // Renamed to avoid conflict
+  const [suggestedAIMilestones, setSuggestedAIMilestones] = useState<string[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const { toast } = useToast();
   const searchParams = useSearchParams();
@@ -62,9 +62,15 @@ export default function RoadmapPage() {
     const singleDescription = searchParams.get('addMilestoneDescription');
     const multipleTitles = searchParams.getAll('title[]');
     const multipleDescriptions = searchParams.getAll('description[]');
+    const newGoalFromQuery = searchParams.get('newGoal');
 
-    let added = false;
+    let addedMilestones = false;
     const newMilestonesFromQuery: Milestone[] = [];
+
+    if (newGoalFromQuery && !goal) { // Check !goal to avoid overwriting if user types/already set
+      setGoal(newGoalFromQuery); // Pre-fill the AI suggestion goal input
+      toast({ title: "Learning Goal Set", description: `Continuing with goal: "${newGoalFromQuery}". You can now add milestones or get AI suggestions.` });
+    }
 
     if (singleTitle) {
       newMilestonesFromQuery.push({
@@ -73,7 +79,7 @@ export default function RoadmapPage() {
         description: singleDescription || "AI Suggested Milestone",
         status: 'todo',
       });
-      added = true;
+      addedMilestones = true;
     }
     
     if (multipleTitles.length > 0) {
@@ -85,16 +91,16 @@ export default function RoadmapPage() {
           status: 'todo',
         });
       });
-      added = true;
+      addedMilestones = true;
     }
 
-    if (added) {
+    if (addedMilestones) {
       setMilestones(prev => [...prev, ...newMilestonesFromQuery]);
       toast({ title: "Milestones Added", description: "Suggested milestones have been added to your roadmap." });
-      // Optionally, clear query params using router.replace, but this requires useRouter
-      // For simplicity, we'll leave them for now or they'll clear on next navigation.
+      // To prevent re-adding on refresh, ideally clear query params here, but that requires router.replace.
+      // For simplicity, we'll leave them or they clear on next navigation.
     }
-  }, [searchParams, toast]);
+  }, [searchParams, toast, goal]); // Added goal to dependency array
 
 
   const handleSuggestMilestones = async (e: FormEvent) => {
@@ -119,8 +125,6 @@ export default function RoadmapPage() {
   };
 
   const addSuggestedMilestoneToRoadmap = (title: string) => {
-    // This function now might be less used if suggestions navigate directly,
-    // but can be kept for adding from the local `suggestedAIMilestones` list.
     const newMilestone: Milestone = {
       id: String(Date.now()),
       title: title,
@@ -128,7 +132,7 @@ export default function RoadmapPage() {
       status: 'todo',
     };
     setMilestones(prev => [...prev, newMilestone]);
-    setSuggestedAIMilestones(prev => prev.filter(m => m !== title));
+    setSuggestedAIMilestones(prev => prev.filter(m => m !== title)); // Remove from suggestions list
     toast({ title: "Milestone Added", description: `"${title}" added to your roadmap.` });
   };
 
@@ -164,7 +168,7 @@ export default function RoadmapPage() {
     <div className="space-y-6">
       <PageHeader
         title="Learning Roadmap"
-        description="Plan and track your learning milestones."
+        description={goal ? `Current Goal: ${goal}` : "Plan and track your learning milestones."}
         actions={
           <Dialog open={showAddMilestoneDialog} onOpenChange={setShowAddMilestoneDialog}>
             <DialogTrigger asChild>
@@ -190,6 +194,7 @@ export default function RoadmapPage() {
                       value={newMilestoneTitle}
                       onChange={(e) => setNewMilestoneTitle(e.target.value)}
                       className="col-span-3"
+                      placeholder="e.g., Complete Chapter 1"
                       required
                     />
                   </div>
@@ -290,13 +295,19 @@ export default function RoadmapPage() {
             </CardContent>
           </Card>
 
-          {suggestedAIMilestones.length > 0 && (
+          {isLoadingSuggestions && (
+            <div className="flex justify-center items-center py-4">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          )}
+
+          {suggestedAIMilestones.length > 0 && !isLoadingSuggestions && (
             <Card>
               <CardHeader>
                 <CardTitle>Suggested Milestones</CardTitle>
                  <CardDescription>Click + to add to your roadmap locally.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="space-y-2 max-h-80 overflow-y-auto">
                 {suggestedAIMilestones.map((suggestion, index) => (
                   <div key={index} className="flex items-center justify-between p-2 border rounded-md bg-card hover:bg-accent/10">
                     <p className="text-sm flex-grow pr-2">{suggestion}</p>
