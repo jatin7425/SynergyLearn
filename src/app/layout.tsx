@@ -2,10 +2,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
-import MainLayout from '@/components/layout/main-layout';
-import { SidebarProvider } from '@/components/ui/sidebar';
+// Removed MainLayout and SidebarProvider imports
 import { AuthProvider } from '@/contexts/AuthContext';
-
+import ConditionalLayout from './conditional-layout'; // Import the new ConditionalLayout
 
 export const metadata: Metadata = {
   title: 'SynergyLearn',
@@ -27,11 +26,7 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <AuthProvider>
-          <SidebarProvider defaultOpen>
-            <MainLayout>
-              {children}
-            </MainLayout>
-          </SidebarProvider>
+          <ConditionalLayout>{children}</ConditionalLayout>
           <Toaster />
         </AuthProvider>
       </body>
