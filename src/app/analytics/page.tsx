@@ -32,8 +32,8 @@ const subjectTimeData = [
 const overallStats = [
     { title: "Total Study Hours", value: "125", icon: Clock, trend: "+15% this month" },
     { title: "Completed Milestones", value: "8", icon: Target, trend: "+2 last week" },
-    { title: "Notes Taken", value: "47", icon: BookOpen, trend: "+5 this week" },
-    { title: "Average Task Completion", value: "85%", icon: CheckCircle, trend: "Consistent" },
+    { title: "Notes Taken", value: "47", icon: BookOpen, trend: "+5 this week" }, // This could be dynamic in future
+    { title: "Avg. Task Completion", value: "85%", icon: CheckCircle, trend: "Consistent" },
 ];
 
 
@@ -45,7 +45,7 @@ export default function AnalyticsPage() {
         description="Visualize your learning progress and identify areas for improvement."
       />
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         {overallStats.map(stat => (
              <Card key={stat.title}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -66,14 +66,14 @@ export default function AnalyticsPage() {
             <CardTitle>Weekly Study Activity</CardTitle>
             <CardDescription>Study hours and tasks completed this week.</CardDescription>
           </CardHeader>
-          <CardContent className="h-[350px]">
+          <CardContent className="h-[300px] md:h-[350px]">
             <ChartContainer config={weeklyProgressChartConfig} className="h-full w-full">
               <ResponsiveContainer>
                 <LineChart data={weeklyProgressData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="day" />
-                  <YAxis yAxisId="left" />
-                  <YAxis yAxisId="right" orientation="right" />
+                  <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Legend />
                   <Line yAxisId="left" type="monotone" dataKey="hours" stroke="var(--color-hours)" strokeWidth={2} dot={{ r: 4 }} />
@@ -89,18 +89,19 @@ export default function AnalyticsPage() {
             <CardTitle>Time Allocation by Subject</CardTitle>
             <CardDescription>How your study time is distributed.</CardDescription>
           </CardHeader>
-          <CardContent className="h-[350px] flex justify-center items-center">
-             <ChartContainer config={{}} className="h-full w-full max-w-xs"> {/* Max width for pie chart */}
+          <CardContent className="h-[300px] md:h-[350px] flex justify-center items-center">
+             <ChartContainer config={{}} className="h-full w-full max-w-xs md:max-w-sm"> {/* Max width for pie chart */}
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie data={subjectTimeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={120} >
+                  <Pie data={subjectTimeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius="80%" > {/* Relative outerRadius */}
                     {subjectTimeData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.fill} />
                     ))}
                      <LabelList
                         dataKey="name"
-                        className="fill-background"
+                        position="outside" // Better for readability
+                        className="fill-foreground" // Use foreground for better contrast
                         stroke="none"
                         fontSize={12}
                         formatter={(value: string) => value}
@@ -120,15 +121,15 @@ export default function AnalyticsPage() {
             <CardDescription>AI-powered insights based on your activity (placeholder).</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-            <div className="flex items-start p-3 border rounded-md bg-accent/10">
-                <Activity className="h-5 w-5 text-primary mr-3 mt-1" />
+            <div className="flex items-start p-3 border rounded-md bg-card hover:shadow-md transition-shadow">
+                <Activity className="h-5 w-5 text-primary mr-3 mt-1 flex-shrink-0" />
                 <div>
                     <p className="font-semibold">Consistent Effort in JavaScript</p>
                     <p className="text-sm text-muted-foreground">You've shown consistent study hours in JavaScript. Consider tackling a more complex project to solidify your skills.</p>
                 </div>
             </div>
-            <div className="flex items-start p-3 border rounded-md bg-destructive/10">
-                <Clock className="h-5 w-5 text-destructive mr-3 mt-1" />
+            <div className="flex items-start p-3 border rounded-md bg-card hover:shadow-md transition-shadow"> {/* Changed from destructive */}
+                <Clock className="h-5 w-5 text-yellow-500 dark:text-yellow-400 mr-3 mt-1 flex-shrink-0" /> {/* Adjusted icon color */}
                 <div>
                     <p className="font-semibold">Low Activity in History</p>
                     <p className="text-sm text-muted-foreground">Your activity in History has been low this month. Try scheduling short, focused review sessions or use flashcards for key dates and events.</p>

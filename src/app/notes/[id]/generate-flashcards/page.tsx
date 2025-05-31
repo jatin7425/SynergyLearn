@@ -5,8 +5,8 @@ import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText, Save, Info } from 'lucide-react';
-import { use, useState, useEffect, FormEvent } from 'react'; // Import 'use'
+import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText, Save, Info, AlertCircle } from 'lucide-react';
+import { use, useState, useEffect, FormEvent } from 'react'; 
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
@@ -24,17 +24,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-
-
-// Mock note data fetching
-const fetchNoteContent = async (id: string): Promise<string | null> => {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  const mockNotesContent: Record<string, string> = {
-    '1': 'Quantum mechanics is a fundamental theory in physics that provides a description of the physical properties of nature at the scale of atoms and subatomic particles. Key concepts include wave-particle duality, superposition, and entanglement. Planck, Einstein, Bohr, Heisenberg, and Schrödinger were key contributors.',
-    '2': 'JavaScript Closures: A closure is the combination of a function bundled together with references to its surrounding state. Async/Await: Syntactic sugar for Promises.',
-  };
-  return mockNotesContent[id] || "Sample note content to generate flashcards and quizzes. This note discusses important historical events and key figures. The French Revolution began in 1789. Key figures included Robespierre and Napoleon Bonaparte. It ended in 1799.";
-};
+import { useAuth } from '@/contexts/AuthContext';
+import { db } from '@/lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { useRouter } from 'next/navigation';
 
 interface Flashcard {
   id: string;
@@ -45,7 +38,6 @@ interface Flashcard {
 interface QuizItem {
   id: string;
   question: string;
-  // These are placeholders as AI flow currently returns quiz questions as strings
   options: string[]; 
   correctAnswer: string; 
 }
@@ -54,15 +46,35 @@ interface SavedCollection {
   id: string;
   title: string;
   flashcards: Flashcard[];
-  quizzes: QuizItem[]; // Storing the processed QuizItems
+  quizzes: QuizItem[]; 
   createdAt: Date;
 }
 
-export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
-  const params = use(props.params);
-  const { id } = params;
+// Function to fetch actual note content from Firebase
+const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<string | null> => {
+  if (!userId || !noteId) return null;
+  try {
+    const noteDocRef = doc(db, 'users', userId, 'notes', noteId);
+    const docSnap = await getDoc(noteDocRef);
+    if (docSnap.exists()) {
+      return docSnap.data()?.content || null;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching note content from Firebase: ", error);
+    return null;
+  }
+};
 
+
+export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(props.params);
+  const { id: noteId } = resolvedParams;
+  const router = useRouter();
+
+  const { user, loading: authLoading } = useAuth();
   const [noteContent, setNoteContent] = useState('');
+  const [originalNoteTitle, setOriginalNoteTitle] = useState('');
   const [isLoadingNote, setIsLoadingNote] = useState(true);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
@@ -78,18 +90,35 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
   const { toast } = useToast();
 
   useEffect(() => {
-    if (id) {
+    if (authLoading) return;
+    if (!user) {
+      toast({ title: "Authentication Required", description: "Please log in to generate study materials.", variant: "destructive" });
+      router.push('/login');
+      return;
+    }
+
+    if (noteId && user) {
       setIsLoadingNote(true);
-      fetchNoteContent(id).then(content => {
+      fetchNoteContentFromFirebase(user.uid, noteId).then(content => {
         if (content) {
           setNoteContent(content);
+          // Attempt to get note title as well for context (optional)
+          const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
+          getDoc(noteDocRef).then(docSnap => {
+            if (docSnap.exists()) setOriginalNoteTitle(docSnap.data()?.title || 'Note ' + noteId);
+            else setOriginalNoteTitle('Note ' + noteId);
+          });
         } else {
-          toast({ title: "Note not found", variant: "destructive" });
+          toast({ title: "Note content not found", description:"Could not load content for this note.", variant: "destructive" });
+          setOriginalNoteTitle('Note ' + noteId); // fallback title
         }
         setIsLoadingNote(false);
       });
+    } else if (!noteId) {
+        toast({ title: "Note ID missing", variant: "destructive" });
+        setIsLoadingNote(false);
     }
-  }, [id, toast]);
+  }, [noteId, user, authLoading, toast, router]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
@@ -118,8 +147,8 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       const parsedQuizzes = result.quizzes.map((qString, index) => ({
         id: `q-${Date.now()}-${index}`,
         question: qString,
-        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"],
-        correctAnswer: "Placeholder Correct Answer" 
+        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"], // AI flow needs to be updated for MCQs
+        correctAnswer: "Placeholder Correct Answer" // AI flow needs to be updated
       }));
       setQuizzes(parsedQuizzes);
 
@@ -128,7 +157,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       toast({ title: "Generation Complete!", description: "Flashcards and quizzes are ready." });
     } catch (error) {
       console.error('Error generating content:', error);
-      toast({ title: "Generation Failed", description: "Could not generate flashcards/quizzes.", variant: "destructive" });
+      toast({ title: "Generation Failed", description: "Could not generate flashcards/quizzes. AI might be busy or input too complex.", variant: "destructive" });
     } finally {
       setIsLoadingAI(false);
     }
@@ -165,14 +194,30 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         quizzes,
         createdAt: new Date(),
     };
-    setSavedCollections(prev => [newCollection, ...prev]);
-    toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved locally.`});
+    setSavedCollections(prev => [newCollection, ...prev]); // Saved locally for this session
+    toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved locally for this session.`});
     setCollectionTitle('');
     setShowSaveDialog(false);
+    // TODO: Implement saving to Firebase user's collections
   };
+  
+  if (authLoading) {
+    return <div className="flex justify-center items-center h-screen"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
+  }
 
-  if (isLoadingNote && !id) { // Also check if id is available before showing loader related to note fetching
-    return <div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+  if (!user && !authLoading) {
+    return (
+        <div className="flex flex-col items-center justify-center h-screen p-4 text-center">
+            <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+            <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+            <p className="text-muted-foreground mb-4">You need to be logged in to generate study materials.</p>
+            <Button onClick={() => router.push('/login')}>Go to Login</Button>
+        </div>
+    );
+  }
+  
+  if (isLoadingNote && noteId) { 
+    return <div className="flex justify-center items-center h-screen"><Loader2 className="h-8 w-8 animate-spin text-primary" /> Loading Note...</div>;
   }
 
 
@@ -180,9 +225,9 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={`From note: ${id}`} 
+        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : `From note ID: ${noteId}`}
         actions={
-            <Link href={`/notes/${id}`} passHref>
+            <Link href={`/notes/${noteId}`} passHref>
                 <Button variant="outline">
                     <FileText className="mr-2 h-4 w-4" /> View Original Note
                 </Button>
@@ -193,11 +238,15 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       <Card>
         <CardHeader>
           <CardTitle>Source Note Content</CardTitle>
-          <CardDescription>This content will be used to generate flashcards and quizzes.</CardDescription>
+          <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50" />
-          <Button onClick={handleGenerate} disabled={isLoadingAI || !noteContent} className="mt-4 w-full">
+          {isLoadingNote ? (
+             <div className="flex justify-center items-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+          ) : (
+            <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50 min-h-[200px]" />
+          )}
+          <Button onClick={handleGenerate} disabled={isLoadingAI || isLoadingNote || !noteContent} className="mt-4 w-full">
             {isLoadingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
             {isLoadingAI ? 'Generating...' : 'Generate Flashcards & Quizzes'}
           </Button>
@@ -211,20 +260,20 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
             <CardDescription>Review your generated flashcards.</CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <div className="min-h-[200px] p-6 border rounded-lg bg-card flex flex-col justify-center items-center relative shadow-inner">
-              <p className="text-lg font-semibold mb-4">{flashcards[currentFlashcardIndex]?.question}</p>
-              {showAnswer && <p className="text-md text-primary">{flashcards[currentFlashcardIndex]?.answer}</p>}
+            <div className="min-h-[150px] md:min-h-[200px] p-4 md:p-6 border rounded-lg bg-card flex flex-col justify-center items-center relative shadow-inner">
+              <p className="text-md md:text-lg font-semibold mb-2 md:mb-4">{flashcards[currentFlashcardIndex]?.question}</p>
+              {showAnswer && <p className="text-sm md:text-md text-primary">{flashcards[currentFlashcardIndex]?.answer}</p>}
             </div>
-            <Button onClick={() => setShowAnswer(!showAnswer)} variant="outline" className="my-4">
+            <Button onClick={() => setShowAnswer(!showAnswer)} variant="outline" className="my-3 md:my-4">
               <RotateCcw className="mr-2 h-4 w-4" /> {showAnswer ? 'Hide' : 'Show'} Answer
             </Button>
-            <div className="flex justify-center gap-4 mt-2">
+            <div className="flex justify-center gap-3 md:gap-4 mt-1 md:mt-2">
               <Button onClick={prevFlashcard} variant="outline" size="icon" disabled={flashcards.length <= 1}>
-                <ChevronLeft className="h-5 w-5" />
+                <ChevronLeft className="h-4 w-4 md:h-5 md:w-5" />
               </Button>
-              <span className="self-center text-sm text-muted-foreground">{currentFlashcardIndex + 1} / {flashcards.length}</span>
+              <span className="self-center text-xs md:text-sm text-muted-foreground">{currentFlashcardIndex + 1} / {flashcards.length}</span>
               <Button onClick={nextFlashcard} variant="outline" size="icon" disabled={flashcards.length <= 1}>
-                <ChevronRight className="h-5 w-5" />
+                <ChevronRight className="h-4 w-4 md:h-5 md:w-5" />
               </Button>
             </div>
           </CardContent>
@@ -237,21 +286,21 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
             <CardTitle>Quizzes</CardTitle>
             <CardDescription>Test your knowledge with these questions. Full MCQ functionality depends on AI providing options/answers.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3 md:space-y-4">
             {quizzes.map((quiz, index) => (
-              <Card key={quiz.id} className="p-4 bg-card shadow-sm">
-                <p className="font-semibold">Q{index + 1}: {quiz.question}</p>
+              <Card key={quiz.id} className="p-3 md:p-4 bg-card shadow-sm">
+                <p className="font-semibold text-sm md:text-base">Q{index + 1}: {quiz.question}</p>
                 <div className="mt-2 space-y-1">
                   {quiz.options?.map(opt => (
-                     <Button key={opt} variant="outline" className="w-full justify-start text-left cursor-not-allowed opacity-70" onClick={() => alert(`Selecting options is not fully implemented without structured AI output.`)}>
+                     <Button key={opt} variant="outline" className="w-full justify-start text-left text-xs md:text-sm cursor-not-allowed opacity-70" onClick={() => alert(`Selecting options is not fully implemented without structured AI output.`)}>
                        {opt}
                      </Button>
                   ))}
                 </div>
-                <Button variant="link" size="sm" className="mt-2" onClick={() => toggleQuizAnswer(quiz.id)}>
+                <Button variant="link" size="sm" className="mt-2 text-xs md:text-sm" onClick={() => toggleQuizAnswer(quiz.id)}>
                     {showQuizAnswers[quiz.id] ? 'Hide' : 'Show'} Answer (Placeholder)
                 </Button>
-                {showQuizAnswers[quiz.id] && <p className="text-sm text-primary mt-1">{quiz.correctAnswer}</p>}
+                {showQuizAnswers[quiz.id] && <p className="text-xs md:text-sm text-primary mt-1">{quiz.correctAnswer}</p>}
               </Card>
             ))}
           </CardContent>
@@ -273,7 +322,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Save Collection</DialogTitle>
-                  <DialogDescription>Enter a title for this collection of flashcards and quizzes.</DialogDescription>
+                  <DialogDescription>Enter a title for this collection of flashcards and quizzes. This will be saved locally for this session.</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSaveCollection}>
                   <div className="py-4">
@@ -302,8 +351,8 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       {savedCollections.length > 0 && (
         <Card>
             <CardHeader>
-                <CardTitle>Locally Saved Collections (This Page Only)</CardTitle>
-                <CardDescription>These collections are saved in this browser session for this page.</CardDescription>
+                <CardTitle>Locally Saved Collections (This Session Only)</CardTitle>
+                <CardDescription>These collections are saved in this browser session for this page only. Full saving to "My Flashcards & Quizzes" not yet implemented.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
                 {savedCollections.map(col => (
@@ -312,7 +361,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
                         <p className="text-xs text-muted-foreground">
                             {col.flashcards.length} flashcards, {col.quizzes.length} quiz questions. Saved on: {col.createdAt.toLocaleDateString()}
                         </p>
-                         <Button variant="outline" size="sm" className="mt-2" onClick={() => alert(`Viewing collection "${col.title}" is not yet implemented here. You can see items in "My Flashcards & Quizzes" page once globally saved.`)}>
+                         <Button variant="outline" size="sm" className="mt-2" onClick={() => alert(`Viewing collection "${col.title}" is not yet implemented here. Items are displayed above.`)}>
                             View (Mock)
                         </Button>
                     </div>
@@ -323,4 +372,3 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     </div>
   );
 }
-

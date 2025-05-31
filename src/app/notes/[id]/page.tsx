@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -5,85 +6,145 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Save, Loader2, Share2 } from 'lucide-react';
+import { BookOpen, Save, Loader2, Share2, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { useRouter } from 'next/navigation';
 
-// Mock note data fetching
-const fetchNoteData = async (id: string) => {
-  // Simulate API call
-  await new Promise(resolve => setTimeout(resolve, 500));
-  if (id === 'new') {
-    return { title: '', content: '', date: new Date().toISOString().split('T')[0] };
-  }
-  // In a real app, fetch from a database
-  const mockNotes: Record<string, { title: string, content: string, date: string }> = {
-    '1': { title: 'Introduction to Quantum Physics', content: 'Quantum mechanics is a fundamental theory in physics that provides a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics including quantum chemistry, quantum field theory, quantum technology, and quantum information science.', date: '2024-07-15' },
-    '2': { title: 'Advanced JavaScript Techniques', content: '## Closures\nA closure is the combination of a function bundled together (enclosed) with references to its surrounding state (the lexical environment). In other words, a closure gives you access to an outer function’s scope from an inner function.\n\n## Async/Await\nAsync/await is syntactic sugar for Promises, making asynchronous code look and behave a bit more like synchronous code.', date: '2024-07-12' },
-  };
-  return mockNotes[id] || null;
-};
-
+interface NoteData {
+  title: string;
+  content: string;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
 
 export default function NoteDetailPage({ params }: { params: { id: string } }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [date, setDate] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const noteId = params.id;
 
   useEffect(() => {
-    if (params.id) {
+    if (authLoading) return;
+    if (!user) {
+      toast({ title: "Authentication Required", description: "Please log in to view or edit notes.", variant: "destructive" });
+      router.push('/login');
+      return;
+    }
+
+    if (noteId && noteId !== 'new') {
       setIsLoading(true);
-      fetchNoteData(params.id).then(data => {
-        if (data) {
-          setTitle(data.title);
-          setContent(data.content);
-          setDate(data.date);
+      const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
+      getDoc(noteDocRef).then(docSnap => {
+        if (docSnap.exists()) {
+          const noteData = docSnap.data() as NoteData;
+          setTitle(noteData.title);
+          setContent(noteData.content);
         } else {
-          toast({ title: "Note not found", variant: "destructive" });
-          // redirect or show error
+          toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
+          router.push('/notes');
         }
         setIsLoading(false);
+      }).catch(error => {
+        console.error("Error fetching note: ", error);
+        toast({ title: "Error fetching note", description: error.message, variant: "destructive" });
+        setIsLoading(false);
+        router.push('/notes');
       });
+    } else {
+      // For 'new' note, initialize with empty fields
+      setTitle('');
+      setContent('');
+      setIsLoading(false);
     }
-  }, [params.id, toast]);
+  }, [noteId, user, authLoading, toast, router]);
 
   const handleSaveNote = async () => {
+    if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in to save notes.", variant: "destructive" });
+      return;
+    }
+    if (!title.trim() && !content.trim()) {
+      toast({ title: "Cannot Save Empty Note", description: "Please add a title or some content.", variant: "destructive" });
+      return;
+    }
+
     setIsSaving(true);
-    // Simulate saving
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log('Saving note:', { title, content, date });
-    toast({ title: "Note Saved!", description: `"${title}" has been saved successfully.` });
-    setIsSaving(false);
+    const noteDataToSave = {
+      title: title.trim() || "Untitled Note", // Default title if empty
+      content: content,
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      if (noteId === 'new') {
+        const notesCollectionRef = collection(db, 'users', user.uid, 'notes');
+        const newNoteRef = await addDoc(notesCollectionRef, {
+          ...noteDataToSave,
+          createdAt: serverTimestamp(),
+        });
+        toast({ title: "Note Created!", description: `"${noteDataToSave.title}" has been saved successfully.` });
+        router.push(`/notes/${newNoteRef.id}`); // Redirect to the new note's page
+      } else {
+        const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
+        await setDoc(noteDocRef, noteDataToSave, { merge: true }); // Use setDoc with merge to update or create if somehow deleted
+        toast({ title: "Note Updated!", description: `"${noteDataToSave.title}" has been updated successfully.` });
+      }
+    } catch (error) {
+      console.error('Error saving note:', error);
+      toast({ title: "Error Saving Note", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  if (isLoading) {
+  if (authLoading || isLoading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex justify-center items-center h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
   }
+  
+  if (!user && !authLoading) {
+    // This case should ideally be handled by the useEffect redirect, but as a fallback:
+    return (
+        <div className="flex flex-col items-center justify-center h-screen p-4 text-center">
+            <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+            <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+            <p className="text-muted-foreground mb-4">You need to be logged in to manage notes.</p>
+            <Button onClick={() => router.push('/login')}>Go to Login</Button>
+        </div>
+    );
+  }
+
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={params.id === 'new' ? 'Create New Note' : title || 'Edit Note'}
-        description={params.id === 'new' ? 'Craft your new note here.' : `Last updated: ${date}`}
+        title={noteId === 'new' ? 'Create New Note' : title || 'Edit Note'}
+        description={noteId === 'new' ? 'Craft your new note here.' : `Last updated: ${new Date().toLocaleDateString()}`}
         actions={
-          <div className="flex gap-2">
-            <Button onClick={handleSaveNote} disabled={isSaving}>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button onClick={handleSaveNote} disabled={isSaving || isLoading}>
               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              {isSaving ? 'Saving...' : 'Save Note'}
+              {isSaving ? 'Saving...' : (noteId === 'new' ? 'Save Note' : 'Update Note')}
             </Button>
-             <Link href={`/notes/${params.id}/generate-flashcards`} passHref>
-                <Button variant="outline">
+            {noteId !== 'new' && (
+             <Link href={`/notes/${noteId}/generate-flashcards`} passHref>
+                <Button variant="outline" disabled={isLoading}>
                     <BookOpen className="mr-2 h-4 w-4" /> Flashcards/Quiz
                 </Button>
             </Link>
+            )}
           </div>
         }
       />
@@ -96,6 +157,7 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto"
+              disabled={isSaving || isLoading}
             />
           </div>
           <div>
@@ -103,26 +165,27 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
               placeholder="Start writing your note here... Markdown is supported!"
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="min-h-[400px] text-base leading-relaxed focus-visible:ring-primary/50"
+              className="min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50"
               rows={15}
+              disabled={isSaving || isLoading}
             />
           </div>
         </CardContent>
          <CardContent className="border-t pt-4 pb-4">
             <p className="text-sm text-muted-foreground">
-                Use Markdown for formatting (e.g., `# Heading`, `**bold**`, `*italic*`, `- list item`). Live preview coming soon.
+                Use Markdown for formatting (e.g., `# Heading`, `**bold**`, `*italic*`, `- list item`).
             </p>
         </CardContent>
       </Card>
       
-      {params.id !== 'new' && (
+      {noteId !== 'new' && (
         <Card>
             <CardHeader>
                 <CardTitle>Note Actions</CardTitle>
             </CardHeader>
             <CardContent className="flex gap-2">
-                <Button variant="outline">
-                    <Share2 className="mr-2 h-4 w-4" /> Share (Not implemented)
+                <Button variant="outline" onClick={() => toast({ title: "Not implemented", description: "Sharing feature coming soon!"})}>
+                    <Share2 className="mr-2 h-4 w-4" /> Share
                 </Button>
             </CardContent>
         </Card>

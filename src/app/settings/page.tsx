@@ -47,7 +47,7 @@ export default function SettingsPage() {
       title: "Settings Saved",
       description: "Your preferences have been updated.",
     });
-    // Here you would also save learningStyle, preferredTopics, etc.
+    // Here you would also save learningStyle, preferredTopics, etc. to Firebase for the user
   };
 
   const handleThemeToggle = (checked: boolean) => {
@@ -55,10 +55,9 @@ export default function SettingsPage() {
   };
 
   if (!mounted) {
-    // To prevent hydration mismatch, you might render a placeholder or null
-    // until the client-side useEffect has run. Or, ensure the initial server render
-    // matches the first client render (which can be tricky with themes).
-    // For simplicity here, we let it render with default and then update.
+    // Return a placeholder or null to prevent hydration mismatch.
+    // The actual switch will render once mounted.
+    return null; 
   }
 
   return (
@@ -73,9 +72,8 @@ export default function SettingsPage() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Left Column for Navigation or Categories - Simplified for now */}
-        <div className="lg:col-span-1 space-y-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="md:col-span-1 space-y-6">
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center"><User className="mr-2 h-5 w-5 text-primary" /> Profile</CardTitle>
@@ -104,22 +102,18 @@ export default function SettingsPage() {
                                 Toggle between light and dark themes.
                             </span>
                         </Label>
-                        {mounted && ( // Only render Switch when mounted to ensure consistent state
-                          <Switch
-                              id="darkMode"
-                              checked={currentTheme === 'dark'}
-                              onCheckedChange={handleThemeToggle}
-                              aria-label="Toggle dark mode"
-                          />
-                        )}
+                        <Switch
+                            id="darkMode"
+                            checked={currentTheme === 'dark'}
+                            onCheckedChange={handleThemeToggle}
+                            aria-label="Toggle dark mode"
+                        />
                     </div>
-                    {/* More appearance settings can go here */}
                 </CardContent>
             </Card>
         </div>
         
-        {/* Right Column for Settings Details */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="md:col-span-2 space-y-6">
             <Card>
                 <CardHeader>
                 <CardTitle className="flex items-center"><Brain className="mr-2 h-5 w-5 text-primary" /> AI & Learning Preferences</CardTitle>
@@ -194,7 +188,6 @@ export default function SettingsPage() {
                         aria-label="Toggle email notifications"
                     />
                 </div>
-                {/* More notification settings can go here */}
                 </CardContent>
             </Card>
 

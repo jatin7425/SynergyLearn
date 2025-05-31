@@ -1,3 +1,4 @@
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
@@ -8,7 +9,7 @@ import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork } from 'l
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart as ShadBarChart } from 'recharts';
+import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart } from 'recharts'; // Corrected import for BarChart
 
 const chartData = [
   { month: "January", tasks: 12, goals: 2 },
@@ -38,7 +39,7 @@ export default function DashboardPage() {
         title="Dashboard"
         description="Welcome back! Here's an overview of your learning journey."
         actions={
-          <Link href="/roadmap/new">
+          <Link href="/roadmap/new" passHref>
             <Button>
               <PlusCircle className="mr-2 h-4 w-4" /> New Goal
             </Button>
@@ -83,28 +84,30 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Learning Progress</CardTitle>
             <CardDescription>Monthly tasks completed and goals achieved.</CardDescription>
           </CardHeader>
-          <CardContent className="h-[300px]">
+          <CardContent className="h-[300px] md:h-[350px]">
             <ChartContainer config={chartConfig} className="h-full w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <ShadBarChart data={chartData}>
+                <BarChart data={chartData}> {/* Corrected usage */}
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="month"
                     tickLine={false}
                     tickMargin={10}
                     axisLine={false}
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={12}
                   />
-                  <YAxis />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} />
                   <Bar dataKey="goals" fill="var(--color-goals)" radius={4} />
-                </ShadBarChart>
+                </BarChart>
               </ResponsiveContainer>
             </ChartContainer>
           </CardContent>
@@ -140,7 +143,7 @@ export default function DashboardPage() {
             <CardTitle>Discover SynergyLearn Features</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-             <Image src="https://placehold.co/1200x400.png" alt="SynergyLearn feature banner" width={1200} height={400} className="w-full h-auto object-cover" data-ai-hint="learning technology" />
+             <Image src="https://placehold.co/1200x300.png" alt="SynergyLearn feature banner" width={1200} height={300} className="w-full h-auto object-cover" data-ai-hint="learning technology" />
         </CardContent>
         <CardFooter className="p-6 bg-muted/50">
             <p className="text-sm text-muted-foreground">
