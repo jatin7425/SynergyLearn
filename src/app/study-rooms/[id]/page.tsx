@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react'; // Import use
 import Image from 'next/image';
 
 // Mock room data
@@ -25,7 +25,9 @@ const fetchRoomData = async (id: string) => {
 interface Member { id: string; name: string; avatar?: string }
 interface Message { id: string; userId: string; userName: string; userAvatar?: string; text: string; timestamp: string; }
 
-export default function StudyRoomDetailPage({ params }: { params: { id: string } }) {
+export default function StudyRoomDetailPage(props: { params: Promise<{ id: string }> }) { // Update props type
+  const { id } = use(props.params); // Unwrap params
+
   const [roomName, setRoomName] = useState('Loading...');
   const [topic, setTopic] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
@@ -36,17 +38,19 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
 
 
   useEffect(() => {
-    fetchRoomData(params.id).then(data => {
-      setRoomName(data.name);
-      setTopic(data.topic);
-      setMembers([currentUser, ...data.members]); // Add current user to members list for UI
-      // Mock initial messages from fetched members
-      setMessages([
-        { id: 'msg1', userId:'user1', userName: data.members[0]?.name || 'Alice', userAvatar: data.members[0]?.avatar, text: 'Hey everyone! Ready to discuss Chapter 3?', timestamp: '10:30 AM' },
-        { id: 'msg2', userId:'user2', userName: data.members[1]?.name || 'Bob', userAvatar: data.members[1]?.avatar, text: 'Sure, I had a few questions on superposition.', timestamp: '10:31 AM' },
-      ]);
-    });
-  }, [params.id]);
+    if (id) { // Use unwrapped id
+      fetchRoomData(id).then(data => {
+        setRoomName(data.name);
+        setTopic(data.topic);
+        setMembers([currentUser, ...data.members]); // Add current user to members list for UI
+        // Mock initial messages from fetched members
+        setMessages([
+          { id: 'msg1', userId:'user1', userName: data.members[0]?.name || 'Alice', userAvatar: data.members[0]?.avatar, text: 'Hey everyone! Ready to discuss Chapter 3?', timestamp: '10:30 AM' },
+          { id: 'msg2', userId:'user2', userName: data.members[1]?.name || 'Bob', userAvatar: data.members[1]?.avatar, text: 'Sure, I had a few questions on superposition.', timestamp: '10:31 AM' },
+        ]);
+      });
+    }
+  }, [id]); // Add id to dependency array
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
