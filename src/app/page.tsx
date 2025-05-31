@@ -9,14 +9,14 @@ import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork, Loader2, AlertCircle, BookOpen, Users, BarChart3, Award, Sparkles, ArrowRight, Sun, Moon } from 'lucide-react';
+import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork, Loader2, AlertCircle, BookOpen, Users, BarChart3, Award, Sparkles, ArrowRight, Sun, Moon, Star } from 'lucide-react'; // Added Star here
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart as ShadBarChart } from 'recharts';
 import { LandingPageLogo } from '@/components/common/logo';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Switch } from '@/components/ui/switch'; // For theme toggle
+// Removed Switch import as it's not directly used in this file for theme toggle (UserNav and landing navbar handle their own)
 
 const chartData = [
   { month: "January", tasks: 12, goals: 2 },
@@ -43,7 +43,7 @@ const landingPageFeatures = [
     icon: Lightbulb,
     title: "AI-Powered Suggestions",
     description: "Let our smart AI suggest milestones, generate flashcards, and help you break down complex topics.",
-    color: "text-yellow-500", // This color might not be directly used if icons are styled with primary
+    color: "text-yellow-500", 
   },
   {
     icon: Users,
@@ -129,22 +129,31 @@ export default function DashboardPage() {
   const [landingMounted, setLandingMounted] = useState(false);
 
   useEffect(() => {
-    if (!user && !authLoading) { // Only run theme logic for landing page if user is not logged in and auth is settled
+    if (!user && !authLoading) { 
       setLandingMounted(true);
-      const storedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
+      const storedTheme = localStorage.getItem('synergylearn_landing_theme') as 'light' | 'dark' | null;
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       setLandingTheme(storedTheme || systemTheme);
     }
   }, [user, authLoading]);
 
   useEffect(() => {
-    if (landingMounted && !user) { // Apply theme only on landing page and when mounted
+    if (landingMounted && !user) { 
       if (landingTheme === 'dark') {
         document.documentElement.classList.add('dark');
       } else {
         document.documentElement.classList.remove('dark');
       }
-      localStorage.setItem('theme', landingTheme);
+      localStorage.setItem('synergylearn_landing_theme', landingTheme);
+    } else if (user) {
+      // If user logs in, remove the landing page specific theme class
+      // The main app theme is handled by UserNav
+      const storedMainTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
+      if (storedMainTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
     }
   }, [landingTheme, landingMounted, user]);
 
@@ -162,10 +171,8 @@ export default function DashboardPage() {
   }
 
   if (!user) {
-    // Render Landing Page UI
     return (
       <div className="flex flex-col min-h-screen bg-background text-foreground">
-        {/* Landing Page Navbar */}
         <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-md shadow-sm">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
             <LandingPageLogo />
@@ -186,7 +193,6 @@ export default function DashboardPage() {
           </div>
         </nav>
 
-        {/* Hero Section */}
         <section className="py-16 md:py-24 lg:py-32 bg-gradient-to-br from-primary/10 via-background to-background">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold font-headline text-foreground mb-6">
@@ -214,7 +220,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Features Section */}
         <section id="features" className="py-16 md:py-20 bg-secondary/30">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl md:text-4xl font-bold font-headline text-center text-foreground mb-4">
@@ -241,7 +246,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* How It Works Section */}
         <section id="how-it-works" className="py-16 md:py-20 bg-background">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl md:text-4xl font-bold font-headline text-center text-foreground mb-4">
@@ -264,7 +268,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Testimonials Section */}
         <section id="testimonials" className="py-16 md:py-20 bg-secondary/30">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl md:text-4xl font-bold font-headline text-center text-foreground mb-4">
@@ -302,7 +305,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Call to Action Section */}
         <section className="py-16 md:py-24 bg-primary text-primary-foreground">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <h2 className="text-3xl md:text-4xl font-bold font-headline mb-6">
@@ -319,7 +321,6 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Footer */}
         <footer className="py-8 bg-muted border-t border-border">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center text-muted-foreground">
             <p className="text-sm">&copy; {new Date().getFullYear()} SynergyLearn. All rights reserved.</p>
@@ -333,7 +334,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Render Dashboard UI for logged-in users
   return (
     <div className="space-y-6">
       <PageHeader
