@@ -241,7 +241,7 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
                 uid: currentUserProfile.uid,
                 name: currentUserProfile.name,
                 avatar: currentUserProfile.avatar,
-                joinedAt: serverTimestamp() as Timestamp
+                joinedAt: Timestamp.now() // Use client-side timestamp
             };
             try {
                 await updateDoc(roomDocRef, {
