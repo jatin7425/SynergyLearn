@@ -61,6 +61,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const currentUserProfile = useMemo(() => {
     if (!user) return null;
+    // Ensure stable parts of user are used for dependencies
     return {
       uid: user.uid,
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
@@ -77,53 +78,58 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       return;
     }
 
-    if (!currentUserProfile) {
-        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
-        setIsLoadingRoom(false); // Ensure loading state is cleared
-        if (!authLoading && !user) { // Double check auth state before redirect
-             router.push(`/login?redirect=${pathname}`);
+    if (!currentUserProfile && !authLoading) { // Added guard for currentUserProfile here
+        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false. User might not be fully available yet.");
+        setIsLoadingRoom(false); 
+        // Redirect if user object isn't available after auth loading completes
+        if (!user) { // Double check actual user object from context
+           router.push(`/login?redirect=${pathname}`);
         }
         return;
     }
     
     setIsLoadingRoom(true);
+    console.log(`Fetching room data for roomId: ${roomId}`);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
     // Fetch main room data once
-    // With the new strict rules, non-creators cannot update the room document to add themselves.
-    // The 'members' array will reflect what's in Firestore, usually set by the creator or during a time with different rules.
     getDoc(roomDocRef).then((docSnap) => {
       if (docSnap.exists()) {
         const fetchedRoomData = { id: docSnap.id, ...docSnap.data() } as RoomData;
         setRoomData(fetchedRoomData);
+        console.log(`Room data for ${roomId} fetched successfully.`);
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
+        console.error(`Room ${roomId} not found in Firestore.`);
         router.push('/study-rooms');
       }
       setIsLoadingRoom(false);
     }).catch(error => {
-      console.error("Error fetching room data: ", error);
+      console.error(`Error fetching room data for ${roomId}: `, error);
       toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
       router.push('/study-rooms');
       setIsLoadingRoom(false);
     });
 
     // Setup snapshot listener for messages
+    console.log(`Setting up Firestore onSnapshot listener for messages in room ${roomId}`);
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
+        console.log(`Firestore onSnapshot for messages in room ${roomId} received data. Document count: ${snapshot.docs.length}`);
         const fetchedMessages: Message[] = [];
         snapshot.forEach(doc => fetchedMessages.push({ id: doc.id, ...doc.data() } as Message));
         setMessages(fetchedMessages);
     }, (error) => {
-        console.error("Error fetching messages: ", error);
-        toast({ title: "Error", description: "Could not load messages.", variant: "destructive" });
+        console.error(`Firestore onSnapshot error for messages in room ${roomId}: `, error);
+        toast({ title: "Error", description: "Could not load messages. Check Firestore indexes for messages (timestamp asc).", variant: "destructive" });
     });
 
     return () => {
+      console.log(`Unsubscribing from messages listener for room ${roomId}`);
       unsubscribeMessages();
     };
-  }, [roomId, authLoading, currentUserProfile, router, pathname, toast]); 
+  }, [roomId, authLoading, currentUserProfile, router, pathname, toast, user]); 
 
   useEffect(() => {
     if (chatScrollAreaRef.current) {
@@ -151,14 +157,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
-
-      // Removed: Update room's updatedAt - This is now restricted to the room creator by Firestore rules.
-      // If current user is the creator, they could still update it, but for simplicity and to align with "messages only" snapshot idea:
-      // if (currentUserProfile.uid === roomData.createdBy) {
-      //   const roomDocRef = doc(db, 'studyRooms', roomId);
-      //   await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
-      // }
-
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
@@ -197,24 +195,21 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
     
-    // With the new rules, only the creator can update the room members list.
-    // For non-creators, "leaving" is just navigating away.
     if (currentUserProfile.uid !== roomData.createdBy) {
-        toast({ title: "Navigating Away", description: `You have left ${roomData.name}. (Your name remains in member list unless removed by creator)`});
+        toast({ title: "Navigating Away", description: `You have left ${roomData.name}.`});
         router.push('/study-rooms');
         return;
     }
 
-    // Logic for creator to remove themselves (or any member if we build that UI)
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
-    if (!memberToRemove) {
-        toast({title: "Error", description: "Cannot leave room, current user data not found in room members.", variant: "destructive"});
-        return;
+    if (!memberToRemove && roomData.createdBy === currentUserProfile.uid) {
+        // If creator is leaving and not in members list for some reason, just proceed
+        console.warn("Creator leaving room but not found in members list. Proceeding with room data update if needed.");
     }
     
     const roomUpdateData = {
-        members: arrayRemove(memberToRemove),
-        memberCount: Math.max(0, (roomData.memberCount || 1) - 1),
+        members: memberToRemove ? arrayRemove(memberToRemove) : roomData.members, // Keep existing members if memberToRemove is not found
+        memberCount: memberToRemove ? Math.max(0, (roomData.memberCount || 1) - 1) : roomData.memberCount,
         updatedAt: serverTimestamp()
     };
 
@@ -226,7 +221,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     } catch (error) {
         const firebaseError = error as FirebaseError;
         console.error("Error leaving room (as creator): ", firebaseError);
-        // Permission error console logging can be kept for debugging if creator actions fail
         toast({ title: "Error Leaving Room", description: firebaseError.message, variant: "destructive"});
     }
   };
@@ -285,7 +279,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               )}
             </div>
             <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData?.memberCount || 0} Members</Button>
-            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator && !!roomData} title={!isRoomCreator && roomData ? "Only room creator can modify member list" : "Leave Room"}>
+            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator && !!roomData && roomData.createdBy !== currentUserProfile?.uid} title={(!isRoomCreator && roomData && roomData.createdBy !== currentUserProfile?.uid) ? "Only room creator can modify member list" : "Leave Room"}>
               <LogOut className="mr-2 h-4 w-4" /> Leave
             </Button>
           </div>
