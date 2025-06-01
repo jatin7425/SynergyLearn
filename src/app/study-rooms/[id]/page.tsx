@@ -152,7 +152,11 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const pathname = router.pathname; // usePathname is a hook, router.pathname for string
+  // const pathname = router.pathname; // usePathname is a hook, router.pathname for string
+  // For client components, usePathname hook is preferred:
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+
+
   const { toast } = useToast();
 
   const [roomData, setRoomData] = useState<RoomData | null>(null);
@@ -197,7 +201,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
     if (authLoading || !roomId) {
       if (!authLoading && !user) {
         toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
-        router.push(`/login?redirect=${pathname}`);
+        router.push(`/login?redirect=/study-rooms/${roomId}`);
       }
       return;
     }
@@ -206,7 +210,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
         console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
         setIsLoadingRoom(false);
         if (!user) {
-           router.push(`/login?redirect=${pathname}`);
+           router.push(`/login?redirect=/study-rooms/${roomId}`);
         }
         return;
     }
@@ -261,7 +265,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
       unsubscribeRoom();
       unsubscribeMessages();
     };
-  }, [roomId, authLoading, currentUserProfile, router, pathname, toast, user]); 
+  }, [roomId, authLoading, currentUserProfile, router, toast, user]); 
 
   useEffect(() => {
     if (messagesEndRef.current && !editingMessageId) { // Don't auto-scroll if editing
@@ -334,8 +338,9 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
         textToInsert = `/${suggestion.name} `;
     } else if (suggestion.type === 'ai' || suggestion.type === 'member') {
         const words = newMessage.split(' ');
-        words.pop();
-        textToInsert = words.join(' ') + (words.length > 0 ? ' ' : '') + `@${suggestion.name} `;
+        words.pop(); // remove the partial @mention
+        const baseText = words.join(' ');
+        textToInsert = (baseText ? baseText + ' ' : '') + `@${suggestion.name} `;
     }
     setNewMessage(textToInsert);
     setShowMentionSuggestions(false);
@@ -610,11 +615,10 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
     if (!editingMessageId || !currentUserProfile || !roomId) return;
     if (editText.trim() === '') {
       toast({ title: "Cannot save empty message", variant: "destructive" });
-      // Or, treat as delete? For now, just prevent empty save.
       return;
     }
 
-    setIsSendingMessage(true); // Reuse for loading state
+    setIsSendingMessage(true); 
     const messageRef = doc(db, 'studyRooms', roomId, 'messages', editingMessageId);
     try {
       await updateDoc(messageRef, {
@@ -634,7 +638,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
   const handleDeleteMessage = async (messageId: string) => {
     if (!currentUserProfile || !roomId) return;
 
-    setIsSendingMessage(true); // Reuse for loading state
+    setIsSendingMessage(true); 
     const messageRef = doc(db, 'studyRooms', roomId, 'messages', messageId);
     try {
       await deleteDoc(messageRef);
@@ -664,7 +668,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
             <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
             <p className="text-muted-foreground mb-4">Please log in to join study rooms.</p>
-            <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+            <Button onClick={() => router.push(`/login?redirect=/study-rooms/${roomId}`)}>Go to Login</Button>
         </div>
     );
   }
@@ -780,9 +784,9 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-grow min-h-0 relative border-t border-b overflow-y-auto max-h-[calc(85vh-120px)]"> {/* Adjust max-height */}
+            <div className="flex-grow min-h-0 relative border-t border-b overflow-y-auto max-h-[calc(85vh-120px)]"> 
                 <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto">
-                    <div className="p-2 md:p-4 space-y-1"> {/* Reduced space-y for compactness */}
+                    <div className="p-2 md:p-4 space-y-1"> 
                         {messages.map((msg) => {
                           const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
                           const isAIMessage = msg.userId === AI_USER_ID;
@@ -828,45 +832,46 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
                                     </div>
                                   </div>
                                 ) : (
-                                  <p className="text-sm break-words">
-                                    {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
-                                  </p>
+                                  <>
+                                    <p className="text-sm break-words">
+                                      {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
+                                    </p>
+                                    {isCurrentUserMessage && !isEditingThisMessage && msg.userId !== AI_USER_ID && (
+                                      <div className={cn(
+                                        "flex gap-1 mt-1.5 justify-end transition-opacity opacity-0 group-hover:opacity-100"
+                                      )}>
+                                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-muted-foreground hover:text-primary-foreground/80" onClick={() => handleStartEdit(msg)} title="Edit message">
+                                          <Edit2 className="h-3 w-3" />
+                                        </Button>
+                                        <AlertDialog>
+                                          <AlertDialogTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive-foreground/80" title="Delete message">
+                                              <Trash2 className="h-3 w-3" />
+                                            </Button>
+                                          </AlertDialogTrigger>
+                                          <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                              <AlertDialogTitle>Delete Message?</AlertDialogTitle>
+                                              <AlertDialogDescription>
+                                                This action cannot be undone. Are you sure you want to permanently delete this message?
+                                              </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                              <AlertDialogAction
+                                                className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+                                                onClick={() => handleDeleteMessage(msg.id)}>
+                                                Delete
+                                              </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
+                                      </div>
+                                    )}
+                                  </>
                                 )}
                               </div>
-                              {isCurrentUserMessage && !isEditingThisMessage && msg.userId !== AI_USER_ID && (
-                                <div className={cn(
-                                  "absolute flex gap-0.5 transition-opacity opacity-0 group-hover:opacity-100",
-                                  isCurrentUserMessage ? "left-0 -translate-x-full mr-1" : "right-0 translate-x-full ml-1",
-                                  "top-1/2 -translate-y-1/2" 
-                                )}>
-                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(msg)} title="Edit message">
-                                    <Edit2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" title="Delete message">
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                      <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Message?</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          This action cannot be undone. Are you sure you want to permanently delete this message?
-                                        </AlertDialogDescription>
-                                      </AlertDialogHeader>
-                                      <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction
-                                          className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-                                          onClick={() => handleDeleteMessage(msg.id)}>
-                                          Delete
-                                        </AlertDialogAction>
-                                      </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                  </AlertDialog>
-                                </div>
-                              )}
+                              
                               {isCurrentUserMessage && (
                                 <Avatar className="h-8 w-8 self-start">
                                   <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
@@ -947,5 +952,3 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
   );
 }
 
-
-    
