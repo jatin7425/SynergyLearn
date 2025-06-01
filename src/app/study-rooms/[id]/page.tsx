@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2 } from 'lucide-react';
-import { useState, useEffect, use, FormEvent, useRef } from 'react';
+import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react'; // Added useMemo
 import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
@@ -24,6 +24,7 @@ interface Member {
   joinedAt?: Timestamp;
 }
 interface RoomData {
+  id: string;
   name: string;
   topic: string;
   members: Member[];
@@ -58,28 +59,45 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
 
-  const currentUserProfile = user ? {
-    uid: user.uid,
-    name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-    avatar: user.photoURL || `https://placehold.co/40x40.png`
-  } : null;
+  const currentUserProfile = useMemo(() => {
+    if (!user) return null;
+    return {
+      uid: user.uid,
+      name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+      avatar: user.photoURL || `https://placehold.co/40x40.png`
+    };
+  }, [user?.uid, user?.displayName, user?.email, user?.photoURL]); // Granular dependencies
 
   useEffect(() => {
-    if (authLoading || !roomId || !user || !currentUserProfile) {
-        if (!authLoading && !user) {
-             toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
-             router.push(`/login?redirect=${pathname}`);
-        }
-        return;
+    // Guard for initial loading states or no room ID
+    if (authLoading || !roomId) {
+      // If auth is done loading and there's no user, redirect.
+      if (!authLoading && !user) { // user check is essential here
+        toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
+        router.push(`/login?redirect=${pathname}`);
+      }
+      return; // Exit early if auth is loading or no roomId
     }
 
+    // At this point, authLoading is false.
+    // If currentUserProfile is null, it means 'user' was null, which should have been caught by the redirect above.
+    // This check is an additional safeguard or for clarity.
+    if (!currentUserProfile) {
+        // This typically means the user is not authenticated or user object is not yet available.
+        // The redirect above should handle the unauthenticated case.
+        // If it reaches here, it's an edge case, ensure setIsLoadingRoom is handled.
+        console.warn("StudyRoomDetailPage: currentUserProfile is null. Auth state might still be resolving or user is not logged in.");
+        setIsLoadingRoom(false); // Ensure loading state is cleared
+        return;
+    }
+    
     setIsLoadingRoom(true);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
     // Fetch main room data once
     getDoc(roomDocRef).then(async (docSnap) => {
       if (docSnap.exists()) {
-        let fetchedRoomData = docSnap.data() as RoomData;
+        let fetchedRoomData = { id: docSnap.id, ...docSnap.data() } as RoomData;
         const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
 
         if (!isMember) {
@@ -91,18 +109,18 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           };
           try {
             await updateDoc(roomDocRef, roomUpdateData);
-            // Manually update client-side state to reflect join immediately
             fetchedRoomData = {
                 ...fetchedRoomData,
                 members: [...(fetchedRoomData.members || []), memberData],
                 memberCount: (fetchedRoomData.memberCount || 0) + 1,
             };
+            setRoomData(fetchedRoomData);
           } catch (err) {
             const firebaseError = err as FirebaseError;
             console.error("Error joining room: ", firebaseError);
             if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
                 console.error(
-                  `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${user?.uid || 'N/A'}.` +
+                  `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
                   `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
                   `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
                   `\nAttempted member data (for arrayUnion):`,
@@ -131,18 +149,21 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             } else {
                 toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
             }
+            // Still set room data even if join fails, to show existing state
+            setRoomData(fetchedRoomData); 
           }
+        } else {
+          setRoomData(fetchedRoomData);
         }
-        setRoomData(fetchedRoomData);
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
         router.push('/study-rooms');
       }
+      setIsLoadingRoom(false);
     }).catch(error => {
       console.error("Error fetching room data: ", error);
       toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
       router.push('/study-rooms');
-    }).finally(() => {
       setIsLoadingRoom(false);
     });
 
@@ -159,9 +180,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     });
 
     return () => {
-      unsubscribeMessages(); // Only messages listener needs cleanup now
+      unsubscribeMessages();
     };
-  }, [roomId, user, authLoading, router, pathname, toast, currentUserProfile]);
+  }, [roomId, authLoading, currentUserProfile, router, pathname, toast]); // Removed 'user' as direct dependency
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -190,8 +211,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
 
-      // Optional: update room's updatedAt. This won't be reflected in current user's roomData state
-      // if roomData is only fetched once.
       const roomDocRef = doc(db, 'studyRooms', roomId);
       await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
 
@@ -200,7 +219,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       console.error("Error sending message: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
         console.error(
-          `Firestore 'create' for /studyRooms/${roomId}/messages OR 'update' for /studyRooms/${roomId} (for updatedAt) DENIED. Client User UID: ${user?.uid || 'N/A'}.` +
+          `Firestore 'create' for /studyRooms/${roomId}/messages OR 'update' for /studyRooms/${roomId} (for updatedAt) DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
@@ -237,7 +256,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
 
-    // Find the member object based on UID. Firestore needs the exact object to remove from array.
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     if (!memberToRemove) {
         toast({title: "Error", description: "Cannot leave room, current user data not found in room members.", variant: "destructive"});
@@ -246,7 +264,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     
     const roomUpdateData = {
         members: arrayRemove(memberToRemove),
-        memberCount: (roomData.memberCount || 1) - 1, // Ensure memberCount doesn't go below 0
+        memberCount: Math.max(0, (roomData.memberCount || 1) - 1),
         updatedAt: serverTimestamp()
     };
 
@@ -260,7 +278,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         console.error("Error leaving room: ", firebaseError);
         if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
             console.error(
-              `Firestore 'update' for /studyRooms/${roomId} DENIED (leaving room). Client User UID: ${user?.uid || 'N/A'}.` +
+              `Firestore 'update' for /studyRooms/${roomId} DENIED (leaving room). Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
               `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
               `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
               `\nAttempted member data (for arrayRemove):`,
@@ -293,7 +311,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   };
 
 
-  if (authLoading || (isLoadingRoom && user)) {
+  if (authLoading || (isLoadingRoom && currentUserProfile)) { // Check currentUserProfile to ensure effect runs after it's potentially set
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -301,7 +319,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
 
-  if (!user && !authLoading) {
+  // This handles the case where auth is done, user is null (and thus currentUserProfile is null)
+  if (!currentUserProfile && !authLoading) { 
+    // The redirect should have happened in useEffect, but this is a fallback display.
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -311,8 +331,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </div>
     );
   }
-
-  if (!roomData && !isLoadingRoom) {
+  
+  if (!roomData && !isLoadingRoom) { // Room data failed to load or room doesn't exist
      return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -417,4 +437,4 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   );
 }
 
-      
+    
