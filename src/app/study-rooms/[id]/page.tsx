@@ -7,9 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Added Tabs imports
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation } from 'lucide-react';
 import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
-// Removed Image from 'next/image' as it's no longer used for whiteboard placeholder
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -56,7 +56,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
-  const chatScrollAreaRef = useRef<HTMLDivElement>(null); // Renamed for clarity
+  const chatScrollAreaRef = useRef<HTMLDivElement>(null);
 
 
   const currentUserProfile = useMemo(() => {
@@ -78,10 +78,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     }
 
     if (!currentUserProfile) {
-        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false. User might not be fully available yet or issue with AuthContext.");
+        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
         setIsLoadingRoom(false);
-        // Optionally redirect or show an error if currentUserProfile is critical and missing
-        if (!authLoading && !user) { // Double check, this case should ideally be caught above
+        if (!authLoading && !user) {
              router.push(`/login?redirect=${pathname}`);
         }
         return;
@@ -98,11 +97,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
         if (!isMember) {
           const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
-          // Ensure memberData has all required fields as per Member interface, especially if currentUserProfile is partial
           const newMemberPayload: Member = {
             uid: memberData.uid,
             name: memberData.name,
-            avatar: memberData.avatar, // This could be undefined if user.photoURL is null
+            avatar: memberData.avatar,
             joinedAt: memberData.joinedAt,
           };
 
@@ -186,7 +184,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     };
   }, [roomId, authLoading, currentUserProfile, router, pathname, toast]); 
 
-  // Effect for auto-scrolling chat
   useEffect(() => {
     if (chatScrollAreaRef.current) {
       const viewport = chatScrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
@@ -371,71 +368,81 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         }
       />
 
-      <div className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
-        <Card className="lg:col-span-2 flex flex-col min-h-[300px] md:min-h-[400px] lg:min-h-0">
-          <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
-            <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle> {/* Changed icon */}
-            <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
-          </CardHeader>
-          <CardContent className="flex-grow flex items-center justify-center bg-muted/20 border-2 border-dashed border-muted-foreground/10 rounded-md m-2 md:m-4 p-2">
-            <div className="text-center text-muted-foreground">
-              <Presentation size={48} className="mx-auto opacity-40 mb-3" />
-              <h3 className="text-lg font-semibold">Shared Whiteboard</h3>
-              <p className="mt-1 text-sm ">Interactive collaboration tools are coming soon!</p>
-            </div>
-          </CardContent>
-        </Card>
+      <Tabs defaultValue="whiteboard" className="flex-grow flex flex-col mt-4 overflow-hidden">
+        <TabsList className="grid w-full grid-cols-2 mb-4">
+          <TabsTrigger value="whiteboard">Whiteboard</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
+        </TabsList>
 
-        <Card className="flex flex-col h-full max-h-[60vh] sm:max-h-[70vh] lg:max-h-full">
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
-          </CardHeader>
-          <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={chatScrollAreaRef}>
-            <div className="space-y-4">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUserProfile?.uid ? 'justify-end' : 'justify-start'}`}>
-                  {msg.userId !== currentUserProfile?.uid && (
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                      <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'A'}</AvatarFallback>
-                    </Avatar>
-                  )}
-                  <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-card border rounded-bl-none'}`}>
-                    <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                        <span className={`text-xs ml-1 font-normal ${msg.userId === currentUserProfile?.uid ? 'text-primary-foreground/80' : 'text-muted-foreground/80'}`}>
-                            {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                        </span>
-                    </p>
-                    <p className="text-sm break-words">{msg.text}</p>
-                  </div>
-                   {msg.userId === currentUserProfile?.uid && (
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                      <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                    </Avatar>
-                  )}
+        <TabsContent value="whiteboard" className="flex-grow m-0">
+          <Card className="h-full flex flex-col">
+            <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+                <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
+            </CardHeader>
+            <CardContent className="flex-grow flex items-center justify-center bg-muted/20 border-2 border-dashed border-muted-foreground/10 rounded-md m-2 md:m-4 p-2">
+                <div className="text-center text-muted-foreground">
+                <Presentation size={48} className="mx-auto opacity-40 mb-3" />
+                <h3 className="text-lg font-semibold">Shared Whiteboard</h3>
+                <p className="mt-1 text-sm ">Interactive collaboration tools are coming soon!</p>
                 </div>
-              ))}
-               {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation!</p>}
-            </div>
-          </ScrollArea>
-          <CardContent className="pt-2 md:pt-4 pb-2">
-            <form onSubmit={handleSendMessage} className="flex gap-2">
-              <Input
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type a message..."
-                className="flex-grow"
-                disabled={!currentUserProfile || isSendingMessage}
-              />
-              <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || newMessage.trim() === ''}>
-                {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="chat" className="flex-grow m-0 flex flex-col h-full">
+          <Card className="flex flex-col h-full">
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
+            </CardHeader>
+            <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={chatScrollAreaRef}>
+              <div className="space-y-4">
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUserProfile?.uid ? 'justify-end' : 'justify-start'}`}>
+                    {msg.userId !== currentUserProfile?.uid && (
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'A'}</AvatarFallback>
+                      </Avatar>
+                    )}
+                    <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-card border rounded-bl-none'}`}>
+                      <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                          <span className={`text-xs ml-1 font-normal ${msg.userId === currentUserProfile?.uid ? 'text-primary-foreground/80' : 'text-muted-foreground/80'}`}>
+                              {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                          </span>
+                      </p>
+                      <p className="text-sm break-words">{msg.text}</p>
+                    </div>
+                     {msg.userId === currentUserProfile?.uid && (
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                      </Avatar>
+                    )}
+                  </div>
+                ))}
+                 {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation!</p>}
+              </div>
+            </ScrollArea>
+            <CardContent className="pt-2 md:pt-4 pb-2">
+              <form onSubmit={handleSendMessage} className="flex gap-2">
+                <Input
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type a message..."
+                  className="flex-grow"
+                  disabled={!currentUserProfile || isSendingMessage}
+                />
+                <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || newMessage.trim() === ''}>
+                  {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
+    
