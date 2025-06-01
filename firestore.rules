@@ -13,7 +13,6 @@ service cloud.firestore {
     match /studyRooms/{roomId} {
       allow read: if request.auth != null;
 
-      // Create rule remains as per your last provided version (creator makes it, basic field checks)
       allow create: if request.auth != null
                   && request.resource.data.name is string 
                   && request.resource.data.topic is string 
@@ -21,21 +20,49 @@ service cloud.firestore {
                   && request.resource.data.containsKey('createdAt')
                   && request.resource.data.containsKey('updatedAt');
       
-      // UPDATE rule is now "like the user one" - only the creator can update.
-      allow update: if request.auth != null 
-                    && resource.data.createdBy == request.auth.uid // Only the creator can update
-                    && request.resource.data.createdBy == resource.data.createdBy // Creator field itself cannot be changed
-                    && request.resource.data.createdAt == resource.data.createdAt // Creation timestamp cannot be changed
-                    && request.resource.data.containsKey('updatedAt'); // Any update must include an updatedAt field
+      allow update: if request.auth != null &&
+                    // Rule part 1: Allow creator to update specific fields (name, topic)
+                    (
+                      resource.data.createdBy == request.auth.uid &&
+                      request.resource.data.createdBy == resource.data.createdBy && // creator cannot be changed
+                      request.resource.data.createdAt == resource.data.createdAt && // createdAt cannot be changed
+                      (
+                        ( // Name or Topic change by creator
+                          (request.resource.data.name != resource.data.name || request.resource.data.topic != resource.data.topic) &&
+                          (request.resource.data.name != resource.data.name ? 
+                            (request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 100) 
+                            : true) &&
+                          (request.resource.data.topic != resource.data.topic ? 
+                            (request.resource.data.topic is string && request.resource.data.topic.size() > 0 && request.resource.data.topic.size() < 200)
+                            : true) &&
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'topic', 'updatedAt'])
+                        ) ||
+                        ( // Member or MemberCount change by creator
+                          (request.resource.data.members != resource.data.members || request.resource.data.memberCount != resource.data.memberCount) &&
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt']) &&
+                          request.resource.data.members is list &&
+                          request.resource.data.memberCount is number && request.resource.data.memberCount >= 0
+                          // Additional checks for when a member is added by the creator (if needed, for now keeping it simpler)
+                        )
+                      )
+                    ) ||
+                    // Rule part 2: Allow any authenticated user to update ONLY the 'updatedAt' field
+                    (
+                      request.resource.data.diff(resource.data).affectedKeys().size() == 1 &&
+                      request.resource.data.diff(resource.data).affectedKeys()[0] == 'updatedAt' &&
+                      request.resource.data.createdBy == resource.data.createdBy && // Ensure other critical fields aren't changed
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      request.resource.data.name == resource.data.name &&
+                      request.resource.data.topic == resource.data.topic &&
+                      request.resource.data.members == resource.data.members &&
+                      request.resource.data.memberCount == resource.data.memberCount
+                    );
 
-      // Delete rule remains as per your last provided version (creator deletes it)
       allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
     }
 
-    // Study Room Messages rules remain as per your last provided version
     match /studyRooms/{roomId}/messages/{messageId} {
       allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId));
-
       allow create: if request.auth != null
                     && request.resource.data.userId == request.auth.uid 
                     && request.resource.data.userName is string 
@@ -44,13 +71,11 @@ service cloud.firestore {
                     && request.resource.data.containsKey('timestamp')
                     && exists(/databases/$(database)/documents/studyRooms/$(roomId))
                     && request.resource.data.keys().hasOnly(['userId', 'userName', 'userAvatar', 'text', 'timestamp']);
-
       allow update: if request.auth != null && resource.data.userId == request.auth.uid &&
                      request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() < 1000 &&
                      request.resource.data.keys().hasOnly(['userId', 'userName', 'userAvatar', 'text', 'timestamp', 'updatedAt']) && 
                      request.resource.data.userId == resource.data.userId &&
                      request.resource.data.userName == resource.data.userName;
-
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
   }
