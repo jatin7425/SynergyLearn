@@ -1,10 +1,13 @@
+
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // User Profile Data (e.g., userProfiles/{userId}, users/{userId}/profile/main)
-    match /users/{userId}/profile/{profileDocId} {
+    // This rule applies to user-specific subcollections like 'profile', 'milestones', 
+    // 'studyCollections', 'schedule', 'timeTrackingLogs', etc.,
+    // unless a more specific rule below (like for 'notes') overrides it.
+    match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
@@ -16,60 +19,78 @@ service cloud.firestore {
       allow write, delete: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Other user-specific collections (milestones, studyCollections, schedule, time tracking)
-    match /users/{userId}/{collectionId}/{docId} 
-      if collectionId != 'notes' && collectionId != 'profile' {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-
     // UserProfiles collection (for searching users by email)
     match /userProfiles/{profileUserId} {
         allow read: if request.auth != null;
         allow create: if request.auth != null && request.auth.uid == profileUserId && request.resource.data.uid == request.auth.uid;
+        // Allow owner to update display Name and photoURL, but not UID or email.
         allow update: if request.auth != null && request.auth.uid == profileUserId
                         && !(request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'email', 'createdAt'])); 
     }
-
+        
     // Shared Note Links
     match /sharedNoteLinks/{linkId} {
+      // Authenticated users can read a link document to resolve it
       allow read: if request.auth != null;
+      // Only the owner of the note (whose UID is stored in the link doc) can create a link for their note
       allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      // Only the owner of the note can delete (revoke) the link
       allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      allow update: if false; 
+      // Updates to links are generally not needed for this simple model
+      allow update: if false;
     }
 
     // System Agents (e.g., AI Helper profile)
     match /systemAgents/{agentId} {
+      // Allow authenticated users to read (e.g., to get AI helper's name/avatar)
       allow read: if request.auth != null;
+      // Allow creation/update only if the agentId is the specific AI_PROFILE_ID
+      // and from an authenticated user (e.g., admin action from settings page)
       allow write: if request.auth != null && agentId == 'AI_ASSISTANT_MAIN';
     }
 
     // Study Rooms
     match /studyRooms/{roomId} {
       allow read: if request.auth != null;
+
+      // Only allow creation if the current user sets their UID as createdBy
       allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
+
+      // Creator can update anything.
+      // Non-creators can update specific fields: members, memberCount, whiteboardDrawing, and updatedAt.
       allow update: if request.auth != null && 
                       (
                         resource.data.createdBy == request.auth.uid || 
                         (
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt'])) ||
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt'])) ||
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt']))
+                          // Non-creators can only modify these specific fields
+                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt'])) || // For join/leave
+                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt'])) || // For whiteboard only
+                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt'])) // For join/leave + whiteboard
                         )
                       );
+                      
       allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
     }
 
     // Study Room Messages
     match /studyRooms/{roomId}/messages/{messageId} {
       allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId));
+
       allow create: if
+                      // Case 1: Authenticated user creating their own message
                       (request.auth != null && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
-                      (request.resource.data.userId == 'AI_ASSISTANT' && request.resource.data.userName == 'AI Helper'); 
+                      // Case 2: Server/AI creating an AI message (request.auth will likely be null)
+                      (request.resource.data.userId == 'AI_ASSISTANT' && 
+                       request.resource.data.userName == 'AI Helper'); 
+										
       allow update: if
+                      // Case 1: Authenticated user updating their own message (and not trying to impersonate AI)
                       (request.auth != null && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
+                      // Case 2: Server/AI updating an existing AI message (e.g., "Thinking..." to actual response)
                       (resource.data.userId == 'AI_ASSISTANT' && request.resource.data.userId == 'AI_ASSISTANT' && 
                        resource.data.userName == 'AI Helper' && request.resource.data.userName == 'AI Helper');
+
+      // Delete only if user owns the message (AI messages are not user-deletable by this rule, nor are other users' messages)
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid && resource.data.userName != 'AI Helper';
     }
   }
