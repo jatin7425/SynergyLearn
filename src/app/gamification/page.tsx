@@ -1,44 +1,47 @@
 
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Award, ShieldCheck, Star, TrendingUp, Zap, Loader2, AlertCircle } from 'lucide-react';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore'; // Added setDoc for potential initialization
 
-const badges = [
-  { id: 'b1', name: 'Early Bird', description: 'Completed a task before 8 AM.', icon: Zap, achieved: true, color: 'text-yellow-500' },
-  { id: 'b2', name: 'Milestone Master', description: 'Achieved 5 learning milestones.', icon: ShieldCheck, achieved: true, color: 'text-green-500' },
-  { id: 'b3', name: 'Note Taker Pro', description: 'Created 10 detailed notes.', icon: Star, achieved: true, color: 'text-blue-500' },
-  { id: 'b4', name: 'Consistent Learner', description: 'Studied for 7 consecutive days.', icon: TrendingUp, achieved: false, color: 'text-purple-500' },
-  { id: 'b5', name: 'Collaborator King', description: 'Actively participated in 3 study rooms.', icon: Award, achieved: false, color: 'text-red-500' },
-  { id: 'b6', name: 'Quiz Whiz', description: 'Scored 90%+ on 5 quizzes.', icon: Zap, achieved: true, color: 'text-indigo-500' },
+// Static definition of all possible badges
+const allBadgesDefinition = [
+  { id: 'earlyBird', name: 'Early Bird', description: 'Completed a task before 8 AM.', icon: Zap, color: 'text-yellow-500' },
+  { id: 'milestoneMaster', name: 'Milestone Master', description: 'Achieved 5 learning milestones.', icon: ShieldCheck, color: 'text-green-500' },
+  { id: 'noteTakerPro', name: 'Note Taker Pro', description: 'Created 10 detailed notes.', icon: Star, color: 'text-blue-500' },
+  { id: 'consistentLearner', name: 'Consistent Learner', description: 'Studied for 7 consecutive days.', icon: TrendingUp, color: 'text-purple-500' },
+  { id: 'collaboratorKing', name: 'Collaborator King', description: 'Actively participated in 3 study rooms.', icon: Award, color: 'text-red-500' },
+  { id: 'quizWhiz', name: 'Quiz Whiz', description: 'Scored 90%+ on 5 quizzes.', icon: Zap, color: 'text-indigo-500' },
 ];
 
-const userStats = {
-  points: 1250,
-  level: 7,
-  nextLevelPoints: 1500,
-};
+interface Badge extends ReturnType<() => typeof allBadgesDefinition[0]> {
+  achieved: boolean;
+}
+
+interface UserGamificationProfile {
+  points: number;
+  level: number;
+  nextLevelPoints: number; // This might be calculated or stored
+  achievedBadgeIds: string[];
+}
 
 const LeaderboardPlaceholderSvg = () => (
   <svg width="300" height="180" viewBox="0 0 300 180" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-4 rounded-md opacity-70" data-ai-hint="leaderboard chart">
     <rect x="45" y="100" width="40" height="50" rx="3" fill="hsl(var(--muted))"/>
     <rect x="45" y="60" width="40" height="35" rx="3" fill="hsl(var(--muted))"/>
-    
     <rect x="95" y="80" width="40" height="70" rx="3" fill="hsl(var(--accent))"/>
     <rect x="95" y="40" width="40" height="35" rx="3" fill="hsl(var(--accent))"/>
-
     <rect x="145" y="30" width="40" height="120" rx="3" fill="hsl(var(--primary))"/>
-    
     <rect x="195" y="70" width="40" height="80" rx="3" fill="hsl(var(--muted))"/>
     <rect x="195" y="50" width="40" height="15" rx="3" fill="hsl(var(--muted))"/>
-    
     <line x1="30" y1="150" x2="270" y2="150" stroke="hsl(var(--border))" strokeWidth="2" strokeLinecap="round"/>
   </svg>
 );
@@ -49,14 +52,55 @@ export default function GamificationPage() {
   const pathname = usePathname();
   const { toast } = useToast();
 
+  const [userStats, setUserStats] = useState<UserGamificationProfile>({ points: 0, level: 1, nextLevelPoints: 100, achievedBadgeIds: [] });
+  const [displayedBadges, setDisplayedBadges] = useState<Badge[]>([]);
+  const [isLoadingGamification, setIsLoadingGamification] = useState(true);
+
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (authLoading) return;
+    if (!user) {
       toast({ title: "Authentication Required", description: "Please log in to view your rewards.", variant: "destructive" });
       router.push(`/login?redirect=${pathname}`);
+      return;
     }
+
+    setIsLoadingGamification(true);
+    const gamificationProfileRef = doc(db, 'users', user.uid, 'profile', 'gamification');
+    
+    getDoc(gamificationProfileRef).then(async (docSnap) => {
+      if (docSnap.exists()) {
+        setUserStats(docSnap.data() as UserGamificationProfile);
+      } else {
+        // Initialize profile if it doesn't exist
+        const initialProfile: UserGamificationProfile = { points: 0, level: 1, nextLevelPoints: 100, achievedBadgeIds: [] };
+        try {
+          await setDoc(gamificationProfileRef, initialProfile);
+          setUserStats(initialProfile);
+        } catch (initError) {
+          console.error("Error initializing gamification profile: ", initError);
+          toast({ title: "Error", description: "Could not initialize your gamification profile.", variant: "destructive" });
+        }
+      }
+    }).catch(error => {
+      console.error("Error fetching gamification profile: ", error);
+      toast({ title: "Error", description: "Could not load your gamification data.", variant: "destructive" });
+    }).finally(() => {
+      setIsLoadingGamification(false);
+    });
+
   }, [user, authLoading, router, pathname, toast]);
 
-  if (authLoading) {
+  useEffect(() => {
+    // Update displayed badges based on userStats.achievedBadgeIds
+    const updatedBadges = allBadgesDefinition.map(badgeDef => ({
+      ...badgeDef,
+      achieved: userStats.achievedBadgeIds.includes(badgeDef.id),
+    }));
+    setDisplayedBadges(updatedBadges);
+  }, [userStats.achievedBadgeIds]);
+
+
+  if (authLoading || isLoadingGamification) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -64,7 +108,7 @@ export default function GamificationPage() {
     );
   }
 
-  if (!user) {
+  if (!user) { // Fallback
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -75,7 +119,7 @@ export default function GamificationPage() {
     );
   }
 
-  const progressToNextLevel = (userStats.points / userStats.nextLevelPoints) * 100;
+  const progressToNextLevel = userStats.nextLevelPoints > 0 ? (userStats.points / userStats.nextLevelPoints) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -120,14 +164,14 @@ export default function GamificationPage() {
           <CardDescription>Collect badges for your accomplishments.</CardDescription>
         </CardHeader>
         <CardContent>
-          {badges.length === 0 ? (
+          {displayedBadges.length === 0 ? (
             <div className="text-center py-8">
                <Image src="https://placehold.co/200x150.png" alt="No badges illustration" width={200} height={150} className="mx-auto mb-4 rounded-md" data-ai-hint="trophy empty" />
               <p className="text-muted-foreground">No badges earned yet. Keep learning to unlock them!</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-              {badges.map((badge) => (
+              {displayedBadges.map((badge) => (
                 <div
                   key={badge.id}
                   className={`flex flex-col items-center p-4 border rounded-lg transition-all ${
@@ -162,3 +206,5 @@ export default function GamificationPage() {
     </div>
   );
 }
+
+    

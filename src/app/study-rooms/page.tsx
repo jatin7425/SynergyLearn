@@ -4,7 +4,7 @@
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PlusCircle, Users, LogIn, Edit, Plus, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, Users, LogIn, Edit, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState, type FormEvent, useEffect } from 'react';
@@ -23,21 +23,19 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
 
 interface StudyRoom {
-  id: string;
+  id: string; // Firestore document ID
   name: string;
-  members: number;
   topic: string;
-  active: boolean;
+  memberCount: number; // Store count directly for easier listing
+  // members: string[]; // Array of user UIDs (more complex to maintain count, use memberCount)
+  createdBy: string; // User UID
+  createdAt: Timestamp;
+  // active: boolean; // Activity can be inferred from last message or member activity
 }
-
-const initialStudyRooms: StudyRoom[] = [
-  { id: 'room1', name: 'Physics Study Group', members: 5, topic: 'Quantum Mechanics', active: true },
-  { id: 'room2', name: 'JavaScript Coders', members: 12, topic: 'React & Next.js', active: true },
-  { id: 'room3', name: 'History Buffs', members: 8, topic: 'World War II', active: false },
-];
 
 export default function StudyRoomsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -45,40 +43,76 @@ export default function StudyRoomsPage() {
   const pathname = usePathname();
   const { toast } = useToast();
   
-  const [studyRooms, setStudyRooms] = useState<StudyRoom[]>(initialStudyRooms);
+  const [studyRooms, setStudyRooms] = useState<StudyRoom[]>([]);
+  const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomTopic, setNewRoomTopic] = useState('');
   
-
   useEffect(() => {
     if (!authLoading && !user) {
       toast({ title: "Authentication Required", description: "Please log in to access study rooms.", variant: "destructive" });
       router.push(`/login?redirect=${pathname}`);
+      return;
+    }
+
+    if (user) {
+      setIsLoadingRooms(true);
+      const roomsColRef = collection(db, 'studyRooms');
+      const q = query(roomsColRef, orderBy('createdAt', 'desc'));
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedRooms: StudyRoom[] = [];
+        snapshot.forEach(doc => {
+          fetchedRooms.push({ id: doc.id, ...doc.data() } as StudyRoom);
+        });
+        setStudyRooms(fetchedRooms);
+        setIsLoadingRooms(false);
+      }, (error) => {
+        console.error("Error fetching study rooms: ", error);
+        toast({ title: "Error", description: "Could not fetch study rooms.", variant: "destructive" });
+        setIsLoadingRooms(false);
+      });
+      return () => unsubscribe();
     }
   }, [user, authLoading, router, pathname, toast]);
 
-  const handleCreateRoom = (e: FormEvent) => {
+  const handleCreateRoom = async (e: FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      toast({ title: "Not Authenticated", variant: "destructive" });
+      return;
+    }
     if (!newRoomName.trim() || !newRoomTopic.trim()) {
       toast({ title: "Missing Information", description: "Please provide a name and topic for the room.", variant: "destructive"});
       return;
     }
-    const newRoom: StudyRoom = {
-      id: `room${Date.now()}`,
-      name: newRoomName,
-      topic: newRoomTopic,
-      members: 1, 
-      active: true,
+    setIsCreatingRoom(true);
+    const newRoomData = {
+      name: newRoomName.trim(),
+      topic: newRoomTopic.trim(),
+      memberCount: 1, // Creator is the first member
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
     };
-    setStudyRooms(prev => [newRoom, ...prev]);
-    toast({ title: "Room Created!", description: `"${newRoomName}" is now active.` });
-    setNewRoomName('');
-    setNewRoomTopic('');
-    setShowCreateRoomDialog(false);
+    try {
+      const roomsColRef = collection(db, 'studyRooms');
+      const docRef = await addDoc(roomsColRef, newRoomData);
+      toast({ title: "Room Created!", description: `"${newRoomName}" is now active.` });
+      setNewRoomName('');
+      setNewRoomTopic('');
+      setShowCreateRoomDialog(false);
+      router.push(`/study-rooms/${docRef.id}`); // Navigate to the new room
+    } catch (error) {
+      console.error("Error creating room: ", error);
+      toast({ title: "Creation Failed", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsCreatingRoom(false);
+    }
   };
 
-  if (authLoading) {
+  if (authLoading || isLoadingRooms) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -86,7 +120,7 @@ export default function StudyRoomsPage() {
     );
   }
 
-  if (!user) {
+  if (!user) { // Fallback
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -112,44 +146,25 @@ export default function StudyRoomsPage() {
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Create New Study Room</DialogTitle>
-                <DialogDescription>
-                  Set up a new space for collaborative learning.
-                </DialogDescription>
+                <DialogDescription>Set up a new space for collaborative learning.</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreateRoom}>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="room-name" className="text-right">
-                      Name
-                    </Label>
-                    <Input
-                      id="room-name"
-                      value={newRoomName}
-                      onChange={(e) => setNewRoomName(e.target.value)}
-                      className="col-span-3"
-                      placeholder="e.g., Quantum Physics Enthusiasts"
-                      required
-                    />
+                    <Label htmlFor="room-name" className="text-right">Name</Label>
+                    <Input id="room-name" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} className="col-span-3" placeholder="e.g., Quantum Physics Enthusiasts" required disabled={isCreatingRoom} />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="room-topic" className="text-right">
-                      Topic
-                    </Label>
-                    <Input
-                      id="room-topic"
-                      value={newRoomTopic}
-                      onChange={(e) => setNewRoomTopic(e.target.value)}
-                      className="col-span-3"
-                      placeholder="e.g., String Theory"
-                      required
-                    />
+                    <Label htmlFor="room-topic" className="text-right">Topic</Label>
+                    <Input id="room-topic" value={newRoomTopic} onChange={(e) => setNewRoomTopic(e.target.value)} className="col-span-3" placeholder="e.g., String Theory" required disabled={isCreatingRoom} />
                   </div>
                 </div>
                 <DialogFooter>
-                  <DialogClose asChild>
-                     <Button type="button" variant="outline">Cancel</Button>
-                  </DialogClose>
-                  <Button type="submit">Create Room</Button>
+                  <DialogClose asChild><Button type="button" variant="outline" disabled={isCreatingRoom}>Cancel</Button></DialogClose>
+                  <Button type="submit" disabled={isCreatingRoom}>
+                    {isCreatingRoom ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Create Room
+                  </Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -157,7 +172,7 @@ export default function StudyRoomsPage() {
         }
       />
       
-      {studyRooms.length === 0 ? (
+      {studyRooms.length === 0 && !isLoadingRooms ? (
          <Card className="text-center">
           <CardHeader>
             <Image src="https://placehold.co/300x200.png" alt="Empty study rooms" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="group study" />
@@ -181,21 +196,24 @@ export default function StudyRoomsPage() {
               <CardContent className="flex-grow">
                 <div className="flex items-center text-sm text-muted-foreground">
                   <Users className="mr-2 h-4 w-4" />
-                  {room.members} members
+                  {room.memberCount} members
                 </div>
-                <div className={`mt-2 text-xs font-semibold ${room.active ? 'text-green-600' : 'text-red-600'}`}>
-                  {room.active ? 'Active Now' : 'Inactive'}
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Created: {room.createdAt?.toDate().toLocaleDateString() || 'N/A'}
                 </div>
               </CardContent>
               <CardContent className="border-t pt-4 flex justify-between">
                 <Link href={`/study-rooms/${room.id}`} passHref>
-                  <Button variant={room.active ? 'default' : 'outline'}>
+                  <Button>
                     <LogIn className="mr-2 h-4 w-4" /> Join Room
                   </Button>
                 </Link>
-                <Button variant="ghost" size="icon" aria-label="Edit room settings" onClick={() => alert(`Edit settings for ${room.name} (Not implemented)`)}>
-                  <Edit className="h-4 w-4" />
-                </Button>
+                {/* Edit only if creator - future enhancement */}
+                {/* {user?.uid === room.createdBy && (
+                  <Button variant="ghost" size="icon" aria-label="Edit room settings" onClick={() => alert(`Edit settings for ${room.name} (Not implemented)`)}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                )} */}
               </CardContent>
             </Card>
           ))}
@@ -204,3 +222,5 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
+
+    

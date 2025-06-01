@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
 
 interface Flashcard {
@@ -31,33 +31,37 @@ interface QuizItem {
   correctAnswer: string; 
 }
 
-interface SavedCollection {
-  id: string;
-  title: string;
-  flashcards: Flashcard[];
-  quizzes: QuizItem[]; 
-  createdAt: Date;
-}
+// This type is not used for Firestore directly but for local state if needed.
+// Firestore will save raw flashcard/quiz arrays.
+// interface SavedCollection {
+//   id: string; // This would be Firestore doc ID
+//   title: string;
+//   flashcards: Flashcard[];
+//   quizzes: QuizItem[]; 
+//   createdAt: Date; // Firestore timestamp
+//   noteId?: string;
+//   noteTitle?: string;
+// }
 
-const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<string | null> => {
-  if (!userId || !noteId) return null;
+const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<{content: string | null, title: string | null}> => {
+  if (!userId || !noteId) return { content: null, title: null };
   try {
     const noteDocRef = doc(db, 'users', userId, 'notes', noteId);
     const docSnap = await getDoc(noteDocRef);
     if (docSnap.exists()) {
-      return docSnap.data()?.content || null;
+      return { content: docSnap.data()?.content || null, title: docSnap.data()?.title || null };
     }
-    return null;
+    return { content: null, title: null };
   } catch (error) {
     console.error("Error fetching note content from Firebase: ", error);
-    return null;
+    return { content: null, title: null };
   }
 };
 
 
 export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
-  const resolvedParams = use(props.params);
-  const { id: noteId } = resolvedParams;
+  const resolvedParams = use(props.params); // This resolves the promise for params
+  const { id: noteId } = resolvedParams || {}; // Ensure resolvedParams is not null
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -68,13 +72,15 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
   const [originalNoteTitle, setOriginalNoteTitle] = useState('');
   const [isLoadingNote, setIsLoadingNote] = useState(true);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [isSavingCollection, setIsSavingCollection] = useState(false);
+  
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [showQuizAnswers, setShowQuizAnswers] = useState<Record<string, boolean>>({});
 
-  const [savedCollections, setSavedCollections] = useState<SavedCollection[]>([]);
+  // const [savedCollections, setSavedCollections] = useState<SavedCollection[]>([]); // Not needed if saving direct to Firestore
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [collectionTitle, setCollectionTitle] = useState('');
 
@@ -88,30 +94,25 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
 
     if (noteId && user) {
       setIsLoadingNote(true);
-      fetchNoteContentFromFirebase(user.uid, noteId).then(content => {
+      fetchNoteContentFromFirebase(user.uid, noteId).then(({ content, title }) => {
         if (content) {
           setNoteContent(content);
-          const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
-          getDoc(noteDocRef).then(docSnap => {
-            if (docSnap.exists()) setOriginalNoteTitle(docSnap.data()?.title || 'Note ' + noteId);
-            else setOriginalNoteTitle('Note ' + noteId);
-          });
         } else {
           toast({ title: "Note content not found", description:"Could not load content for this note.", variant: "destructive" });
-          setOriginalNoteTitle('Note ' + noteId); 
         }
+        setOriginalNoteTitle(title || 'Note ' + noteId);
         setIsLoadingNote(false);
       });
-    } else if (!noteId) {
-        toast({ title: "Note ID missing", variant: "destructive" });
+    } else if (!noteId) { // If accessed directly via /ai/flashcard-generator (no noteId)
+        setOriginalNoteTitle('Custom Text Input'); 
         setIsLoadingNote(false);
     }
   }, [noteId, user, authLoading, toast, router, pathname]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
-    if (!noteContent) {
-      toast({ title: "Note content is empty", description: "Cannot generate from an empty note.", variant: "destructive" });
+    if (!noteContent.trim()) {
+      toast({ title: "Note content is empty", description: "Cannot generate from an empty note or text.", variant: "destructive" });
       return;
     }
     setIsLoadingAI(true);
@@ -135,6 +136,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       const parsedQuizzes = result.quizzes.map((qString, index) => ({
         id: `q-${Date.now()}-${index}`,
         question: qString,
+        // AI currently doesn't provide structured options/answers for quizzes
         options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"], 
         correctAnswer: "Placeholder Correct Answer" 
       }));
@@ -142,6 +144,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
 
       setCurrentFlashcardIndex(0);
       setShowAnswer(false);
+      setCollectionTitle(originalNoteTitle ? `${originalNoteTitle} - Study Set` : 'New Study Set');
       toast({ title: "Generation Complete!", description: "Flashcards and quizzes are ready." });
     } catch (error) {
       console.error('Error generating content:', error);
@@ -165,8 +168,12 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     setShowQuizAnswers(prev => ({ ...prev, [quizId]: !prev[quizId] }));
   };
 
-  const handleSaveCollection = (e: FormEvent) => {
+  const handleSaveCollection = async (e: FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive"});
+      return;
+    }
     if (!collectionTitle.trim()) {
         toast({ title: "Title required", description: "Please enter a title for your collection.", variant: "destructive"});
         return;
@@ -175,20 +182,33 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         toast({ title: "Nothing to save", description: "Generate some flashcards or quizzes first.", variant: "destructive"});
         return;
     }
-    const newCollection: SavedCollection = {
-        id: `col-${Date.now()}`,
-        title: collectionTitle,
+    setIsSavingCollection(true);
+    const collectionData = {
+        title: collectionTitle.trim(),
         flashcards,
         quizzes,
-        createdAt: new Date(),
+        createdAt: serverTimestamp(),
+        ...(noteId && { sourceNoteId: noteId }),
+        ...(noteId && originalNoteTitle && { sourceNoteTitle: originalNoteTitle }),
     };
-    setSavedCollections(prev => [newCollection, ...prev]); 
-    toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved locally for this session.`});
-    setCollectionTitle('');
-    setShowSaveDialog(false);
+    try {
+        const collectionsRef = collection(db, 'users', user.uid, 'studyCollections');
+        await addDoc(collectionsRef, collectionData);
+        toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved to your collections.`});
+        setCollectionTitle('');
+        setShowSaveDialog(false);
+        // Optionally clear generated content or redirect
+        // setFlashcards([]); 
+        // setQuizzes([]);
+    } catch (error) {
+        console.error("Error saving collection: ", error);
+        toast({ title: "Save Failed", description: (error as Error).message, variant: "destructive"});
+    } finally {
+        setIsSavingCollection(false);
+    }
   };
   
-  if (authLoading || (user && isLoadingNote && noteId)) { // Show loader if auth is loading OR (user exists AND note is loading AND noteId is present)
+  if (authLoading || (user && isLoadingNote && noteId)) {
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -196,7 +216,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     );
   }
 
-  if (!user && !authLoading) { // If auth is done, but no user
+  if (!user && !authLoading) {
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -211,28 +231,35 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : (noteId ? `From note ID: ${noteId}`: 'Generate study materials')}
+        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : (noteId ? `From note ID: ${noteId}`: 'Generate from any text')}
         actions={
-            noteId && <Link href={`/notes/${noteId}`} passHref>
-                <Button variant="outline">
+          <>
+            {noteId && <Link href={`/notes/${noteId}`} passHref>
+                <Button variant="outline" className="mr-2">
                     <FileText className="mr-2 h-4 w-4" /> View Original Note
                 </Button>
+            </Link>}
+             <Link href="/flashcards-quizzes" passHref>
+                <Button variant="outline">
+                     My Collections
+                </Button>
             </Link>
+          </>
         }
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>Source Note Content</CardTitle>
-          <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes.</CardDescription>
+          <CardTitle>Source Text</CardTitle>
+          <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes, or paste any text if not starting from a note.</CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoadingNote && noteId ? ( // Check noteId here to avoid showing loader if on general page without a note context
+          {isLoadingNote && noteId ? ( 
              <div className="flex justify-center items-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
           ) : (
-            <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50 min-h-[200px]" />
+            <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50 min-h-[200px]" placeholder="Paste your notes or any text here..."/>
           )}
-          <Button onClick={handleGenerate} disabled={isLoadingAI || (isLoadingNote && !!noteId) || !noteContent} className="mt-4 w-full">
+          <Button onClick={handleGenerate} disabled={isLoadingAI || (isLoadingNote && !!noteId) || !noteContent.trim()} className="mt-4 w-full">
             {isLoadingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
             {isLoadingAI ? 'Generating...' : 'Generate Flashcards & Quizzes'}
           </Button>
@@ -301,14 +328,15 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
           <CardContent>
             <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
               <DialogTrigger asChild>
-                <Button className="w-full">
-                  <Save className="mr-2 h-4 w-4" /> Save to My Collection
+                <Button className="w-full" disabled={isSavingCollection}>
+                  {isSavingCollection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  Save to My Collection
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Save Collection</DialogTitle>
-                  <DialogDescription>Enter a title for this collection of flashcards and quizzes. This will be saved locally for this session.</DialogDescription>
+                  <DialogDescription>Enter a title for this collection of flashcards and quizzes. This will be saved to your account.</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSaveCollection}>
                   <div className="py-4">
@@ -317,44 +345,32 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
                       id="collection-title" 
                       value={collectionTitle} 
                       onChange={(e) => setCollectionTitle(e.target.value)}
-                      placeholder="e.g., Chapter 1 Review"
+                      placeholder={originalNoteTitle ? `${originalNoteTitle} - Study Set` : "e.g., Chapter 1 Review"}
                       required
+                      disabled={isSavingCollection}
                     />
                   </div>
                   <DialogFooter>
                     <DialogClose asChild>
-                      <Button type="button" variant="outline">Cancel</Button>
+                      <Button type="button" variant="outline" disabled={isSavingCollection}>Cancel</Button>
                     </DialogClose>
-                    <Button type="submit">Save</Button>
+                    <Button type="submit" disabled={isSavingCollection}>
+                       {isSavingCollection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                       Save
+                    </Button>
                   </DialogFooter>
                 </form>
               </DialogContent>
             </Dialog>
+            {/* Placeholder for Export buttons */}
+            {/* <Button variant="outline" className="w-full mt-2" onClick={() => toast({title: "Not Implemented"})}>Export Flashcards (CSV)</Button> */}
           </CardContent>
         </Card>
       )}
 
-      {savedCollections.length > 0 && (
-        <Card>
-            <CardHeader>
-                <CardTitle>Locally Saved Collections (This Session Only)</CardTitle>
-                <CardDescription>These collections are saved in this browser session for this page only. Full saving to "My Flashcards & Quizzes" not yet implemented.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-                {savedCollections.map(col => (
-                    <div key={col.id} className="p-3 border rounded-md">
-                        <h4 className="font-semibold">{col.title}</h4>
-                        <p className="text-xs text-muted-foreground">
-                            {col.flashcards.length} flashcards, {col.quizzes.length} quiz questions. Saved on: {col.createdAt.toLocaleDateString()}
-                        </p>
-                         <Button variant="outline" size="sm" className="mt-2" onClick={() => alert(`Viewing collection "${col.title}" is not yet implemented here. Items are displayed above.`)}>
-                            View (Mock)
-                        </Button>
-                    </div>
-                ))}
-            </CardContent>
-        </Card>
-      )}
+      {/* Removed local savedCollections display as we now save to Firestore */}
     </div>
   );
 }
+
+    

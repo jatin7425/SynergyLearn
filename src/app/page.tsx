@@ -9,34 +9,25 @@ import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork, Loader2, AlertCircle, BookOpen, Users, BarChart3, Award, Sparkles, ArrowRight, Sun, Moon, Star } from 'lucide-react'; // Added Star here
+import { CheckCircle, Lightbulb, Target, PlusCircle, Activity, GitFork, Loader2, AlertCircle, BookOpen, Users, BarChart3, Award, Sparkles, ArrowRight, Sun, Moon, Star } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart as ShadBarChart } from 'recharts';
 import { LandingPageLogo } from '@/components/common/logo';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-// Removed Switch import as it's not directly used in this file for theme toggle (UserNav and landing navbar handle their own)
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 
-const chartData = [
-  { month: "January", tasks: 12, goals: 2 },
-  { month: "February", tasks: 19, goals: 3 },
-  { month: "March", tasks: 23, goals: 4 },
-  { month: "April", tasks: 17, goals: 3 },
-  { month: "May", tasks: 25, goals: 5 },
-  { month: "June", tasks: 18, goals: 3 },
-];
-
-const chartConfig = {
-  tasks: {
-    label: "Tasks Completed",
-    color: "hsl(var(--primary))",
-  },
-  goals: {
-    label: "Goals Achieved",
-    color: "hsl(var(--accent))",
-  },
-} satisfies import('@/components/ui/chart').ChartConfig;
+interface Milestone {
+  id: string;
+  title: string;
+  description: string;
+  status: 'todo' | 'inprogress' | 'done';
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
 
 const landingPageFeatures = [
   {
@@ -119,14 +110,41 @@ const testimonials = [
   }
 ];
 
+const initialChartData = [
+  { month: "January", tasks: 0, goals: 0 },
+  { month: "February", tasks: 0, goals: 0 },
+  { month: "March", tasks: 0, goals: 0 },
+  { month: "April", tasks: 0, goals: 0 },
+  { month: "May", tasks: 0, goals: 0 },
+  { month: "June", tasks: 0, goals: 0 },
+];
+
+const chartConfig = {
+  tasks: {
+    label: "Tasks Completed",
+    color: "hsl(var(--primary))",
+  },
+  goals: { // This might represent milestones achieved or broader goals.
+    label: "Milestones Achieved",
+    color: "hsl(var(--accent))",
+  },
+} satisfies import('@/components/ui/chart').ChartConfig;
+
+
 export default function DashboardPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const pathname = usePathname();
   const { toast } = useToast();
 
   const [landingTheme, setLandingTheme] = useState<'light' | 'dark'>('light');
   const [landingMounted, setLandingMounted] = useState(false);
+
+  const [activeGoalsCount, setActiveGoalsCount] = useState(0);
+  const [tasksCompletedCount, setTasksCompletedCount] = useState(0);
+  const [overallProgress, setOverallProgress] = useState(0);
+  const [dashboardChartData, setDashboardChartData] = useState(initialChartData);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+  const [currentGoalTitle, setCurrentGoalTitle] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user && !authLoading) { 
@@ -146,8 +164,6 @@ export default function DashboardPage() {
       }
       localStorage.setItem('synergylearn_landing_theme', landingTheme);
     } else if (user) {
-      // If user logs in, remove the landing page specific theme class
-      // The main app theme is handled by UserNav
       const storedMainTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
       if (storedMainTheme === 'dark') {
         document.documentElement.classList.add('dark');
@@ -157,12 +173,68 @@ export default function DashboardPage() {
     }
   }, [landingTheme, landingMounted, user]);
 
+  useEffect(() => {
+    if (user && !authLoading) {
+      setIsLoadingStats(true);
+      const fetchDashboardData = async () => {
+        try {
+          // Fetch learning goal
+          const profileDocRef = doc(db, 'users', user.uid, 'profile', 'main');
+          const profileDocSnap = await getDoc(profileDocRef);
+          if (profileDocSnap.exists() && profileDocSnap.data()?.learningGoal) {
+            setCurrentGoalTitle(profileDocSnap.data()?.learningGoal);
+            setActiveGoalsCount(1); // Assuming one main goal for now
+          } else {
+            setActiveGoalsCount(0);
+            setCurrentGoalTitle(null);
+          }
+
+          // Fetch milestones for progress
+          const milestonesRef = collection(db, 'users', user.uid, 'milestones');
+          const milestonesQuery = query(milestonesRef);
+          const milestonesSnap = await getDocs(milestonesQuery);
+          
+          const allMilestones: Milestone[] = [];
+          milestonesSnap.forEach(doc => allMilestones.push({ id: doc.id, ...doc.data() } as Milestone));
+          
+          const completed = allMilestones.filter(m => m.status === 'done').length;
+          setTasksCompletedCount(completed);
+          
+          if (allMilestones.length > 0) {
+            setOverallProgress(Math.round((completed / allMilestones.length) * 100));
+          } else {
+            setOverallProgress(0);
+          }
+
+          // Placeholder for more detailed chart data aggregation
+          // For now, we'll use simplified logic or keep it somewhat static
+          // This part would require more complex data logging (e.g., daily completions)
+          const newChartData = [...initialChartData];
+          if (allMilestones.length > 0) { // Very basic: distribute completed tasks over last months
+            newChartData[5].tasks = completed; // Put all completed in current month for simplicity
+            // newChartData[5].goals = activeGoalsCount; // if 1 goal is active
+          }
+          setDashboardChartData(newChartData);
+
+        } catch (err) {
+          console.error("Error fetching dashboard data: ", err);
+          toast({ title: "Error", description: "Could not load dashboard statistics.", variant: "destructive" });
+        } finally {
+          setIsLoadingStats(false);
+        }
+      };
+      fetchDashboardData();
+    } else if (!user && !authLoading) {
+      setIsLoadingStats(false); // Not logged in, no stats to load
+    }
+  }, [user, authLoading, toast]);
+
+
   const toggleLandingTheme = () => {
     setLandingTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
-
-  if (authLoading) {
+  if (authLoading || (!user && !landingMounted)) { // Show loader if auth is loading OR (no user AND landing page assets not ready)
     return (
       <div className="flex justify-center items-center min-h-screen bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -170,7 +242,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user) {
+  if (!user) { // Landing Page
     return (
       <div className="flex flex-col min-h-screen bg-background text-foreground">
         <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-md shadow-sm">
@@ -333,12 +405,15 @@ export default function DashboardPage() {
       </div>
     );
   }
-
+  // Logged-in Dashboard view
   return (
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        description="Welcome back! Here's an overview of your learning journey."
+        description={
+            isLoadingStats ? "Loading your learning overview..." : 
+            currentGoalTitle ? `Current Goal: ${currentGoalTitle}` : "Welcome back! Set a new goal to get started."
+        }
         actions={
           <Link href="/roadmap/new" passHref>
             <Button>
@@ -347,30 +422,44 @@ export default function DashboardPage() {
           </Link>
         }
       />
-
+    {isLoadingStats ? (
+        <div className="grid gap-4 md:gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            {[...Array(3)].map((_, i) => (
+                <Card key={i}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium"><Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Loading...</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                        <p className="text-xs text-muted-foreground">Fetching data...</p>
+                    </CardContent>
+                </Card>
+            ))}
+        </div>
+    ) : (
       <div className="grid gap-4 md:gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Goals</CardTitle>
+            <CardTitle className="text-sm font-medium">Active Goal</CardTitle>
             <Target className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">3</div>
+            <div className="text-2xl font-bold">{activeGoalsCount}</div>
             <p className="text-xs text-muted-foreground">
-              +1 from last month
+              {currentGoalTitle ? `Focused on: ${currentGoalTitle.substring(0,25)}${currentGoalTitle.length > 25 ? '...' : ''}` : "No primary goal set"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Tasks Completed</CardTitle>
+            <CardTitle className="text-sm font-medium">Milestones Completed</CardTitle>
             <CheckCircle className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">27</div>
-            <p className="text-xs text-muted-foreground">
-              7 pending for this week
-            </p>
+            <div className="text-2xl font-bold">{tasksCompletedCount}</div>
+            {/* <p className="text-xs text-muted-foreground">
+              7 pending for this week (Static placeholder)
+            </p> */}
           </CardContent>
         </Card>
         <Card>
@@ -379,22 +468,23 @@ export default function DashboardPage() {
             <Activity className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">65%</div>
-            <Progress value={65} className="mt-2 h-2" />
+            <div className="text-2xl font-bold">{overallProgress}%</div>
+            <Progress value={overallProgress} className="mt-2 h-2" />
           </CardContent>
         </Card>
       </div>
-
+    )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Learning Progress</CardTitle>
-            <CardDescription>Monthly tasks completed and goals achieved.</CardDescription>
+            <CardDescription>Monthly milestones completed (simplified view).</CardDescription>
           </CardHeader>
           <CardContent className="h-[250px] md:h-[300px]">
+          {isLoadingStats ? <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div> : 
             <ChartContainer config={chartConfig} className="h-full w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <ShadBarChart data={chartData}>
+                <ShadBarChart data={dashboardChartData}>
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="month"
@@ -404,13 +494,14 @@ export default function DashboardPage() {
                     stroke="hsl(var(--muted-foreground))"
                     fontSize={10}
                   />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} allowDecimals={false} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} />
-                  <Bar dataKey="goals" fill="var(--color-goals)" radius={4} />
+                  {/* <Bar dataKey="goals" fill="var(--color-goals)" radius={4} /> */}
                 </ShadBarChart>
               </ResponsiveContainer>
             </ChartContainer>
+            }
           </CardContent>
         </Card>
 
@@ -460,3 +551,5 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+    

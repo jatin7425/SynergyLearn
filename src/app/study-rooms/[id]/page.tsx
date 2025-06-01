@@ -8,94 +8,178 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2 } from 'lucide-react';
-import { useState, useEffect, use } from 'react'; 
+import { useState, useEffect, use, FormEvent, useRef } from 'react'; 
 import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
 
+interface Member { 
+  uid: string; 
+  name: string; 
+  avatar?: string;
+  joinedAt?: Timestamp; // Optional: track when they joined this room
+}
+interface RoomData {
+  name: string;
+  topic: string;
+  members: Member[]; // Array of member objects
+  createdBy: string;
+  createdAt: Timestamp;
+}
+interface Message { 
+  id: string; // Firestore doc ID
+  userId: string; 
+  userName: string; 
+  userAvatar?: string; 
+  text: string; 
+  timestamp: Timestamp | null; // Firestore Server Timestamp
+}
 
-// Mock room data
-const fetchRoomData = async (id: string) => {
-  await new Promise(resolve => setTimeout(resolve, 300)); 
-  const rooms: Record<string, { name: string; topic: string; members: Member[] }> = {
-    'room1': { name: 'Physics Study Group', topic: 'Quantum Mechanics', members: [{ id: 'user1', name: 'Alice', avatar: 'https://placehold.co/40x40.png' }, { id: 'user2', name: 'Bob', avatar: 'https://placehold.co/40x40.png' }] },
-    'room2': { name: 'JavaScript Coders', topic: 'React & Next.js', members: [{ id: 'user3', name: 'Charlie', avatar: 'https://placehold.co/40x40.png' }] },
-  };
-  return rooms[id] || { name: 'Unknown Room', topic: 'N/A', members: [] };
-};
-
-interface Member { id: string; name: string; avatar?: string }
-interface Message { id: string; userId: string; userName: string; userAvatar?: string; text: string; timestamp: string; }
-
-export default function StudyRoomDetailPage(props: { params: Promise<{ id: string }> }) { 
+export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) { 
   const resolvedParams = use(props.params); 
-  const { id: roomId } = resolvedParams;
+  const { id: roomId } = resolvedParams || {};
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
 
-  const [roomName, setRoomName] = useState('Loading...');
-  const [topic, setTopic] = useState('');
-  const [members, setMembers] = useState<Member[]>([]);
+  const [roomData, setRoomData] = useState<RoomData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [isLoadingRoomData, setIsLoadingRoomData] = useState(true);
-  
-  const currentUser = user ? { id: user.uid, name: user.displayName || user.email?.split('@')[0] || 'You', avatar: user.photoURL || `https://placehold.co/40x40.png` } : null;
+  const [isLoadingRoom, setIsLoadingRoom] = useState(true);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
 
+  const currentUserProfile = user ? { 
+    uid: user.uid, 
+    name: user.displayName || user.email?.split('@')[0] || 'Anonymous', 
+    avatar: user.photoURL || `https://placehold.co/40x40.png` 
+  } : null;
+
+  // Fetch room data and join user to room
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-        toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
-        router.push(`/login?redirect=${pathname}`);
+    if (authLoading || !roomId || !user || !currentUserProfile) {
+        if (!authLoading && !user) {
+             toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
+             router.push(`/login?redirect=${pathname}`);
+        }
         return;
     }
 
-    if (roomId && currentUser) { 
-      setIsLoadingRoomData(true);
-      fetchRoomData(roomId).then(data => {
-        setRoomName(data.name);
-        setTopic(data.topic);
-        const existingMemberIds = data.members.map(m => m.id);
-        const currentMembers = existingMemberIds.includes(currentUser.id) ? data.members : [currentUser, ...data.members];
-        setMembers(currentMembers);
-        
-        const initialMessages: Message[] = [];
-        if (data.members[0]) {
-            initialMessages.push({ id: 'msg1', userId:data.members[0].id, userName: data.members[0]?.name || 'Alice', userAvatar: data.members[0]?.avatar || 'https://placehold.co/40x40.png', text: 'Hey everyone! Ready to discuss Chapter 3?', timestamp: '10:30 AM' });
-        }
-        if (data.members[1]) {
-             initialMessages.push({ id: 'msg2', userId:data.members[1].id, userName: data.members[1]?.name || 'Bob', userAvatar: data.members[1]?.avatar || 'https://placehold.co/40x40.png', text: 'Sure, I had a few questions on superposition.', timestamp: '10:31 AM' });
-        }
-        setMessages(initialMessages);
-        setIsLoadingRoomData(false);
-      }).catch(() => {
-        setIsLoadingRoomData(false);
-        toast({title: "Error", description: "Could not load room data.", variant: "destructive"});
-      });
-    }
-  }, [roomId, user, authLoading, router, pathname, toast, currentUser]); // currentUser in dep array
+    setIsLoadingRoom(true);
+    const roomDocRef = doc(db, 'studyRooms', roomId);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser || newMessage.trim() === '') return;
-    const msg: Message = {
-      id: String(Date.now()),
-      userId: currentUser.id,
-      userName: currentUser.name,
-      userAvatar: currentUser.avatar,
-      text: newMessage,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const unsubscribeRoom = onSnapshot(roomDocRef, async (docSnap) => {
+        if (docSnap.exists()) {
+            const fetchedRoomData = docSnap.data() as RoomData;
+            
+            // Check if current user is a member, if not, add them
+            const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
+            if (!isMember) {
+                try {
+                    await updateDoc(roomDocRef, {
+                        members: arrayUnion({ ...currentUserProfile, joinedAt: serverTimestamp() }),
+                        memberCount: (fetchedRoomData.members?.length || 0) + 1
+                    });
+                    // The listener will pick up the change and update roomData state
+                } catch (err) {
+                    console.error("Error joining room: ", err);
+                    toast({ title: "Error Joining Room", description: (err as Error).message, variant: "destructive"});
+                }
+            }
+            setRoomData(fetchedRoomData);
+        } else {
+            toast({ title: "Room Not Found", variant: "destructive" });
+            router.push('/study-rooms');
+        }
+        setIsLoadingRoom(false);
+    }, (error) => {
+        console.error("Error fetching room data: ", error);
+        toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
+        setIsLoadingRoom(false);
+        router.push('/study-rooms');
+    });
+    
+    // Fetch messages
+    const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
+    const q = query(messagesColRef, orderBy('timestamp', 'asc'));
+    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
+        const fetchedMessages: Message[] = [];
+        snapshot.forEach(doc => fetchedMessages.push({ id: doc.id, ...doc.data() } as Message));
+        setMessages(fetchedMessages);
+    }, (error) => {
+        console.error("Error fetching messages: ", error);
+        toast({ title: "Error", description: "Could not load messages.", variant: "destructive" });
+    });
+
+    return () => {
+      unsubscribeRoom();
+      unsubscribeMessages();
     };
-    setMessages(prev => [...prev, msg]);
-    setNewMessage('');
+  }, [roomId, user, authLoading, router, pathname, toast, currentUserProfile]);
+
+  // Scroll to bottom of chat
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+      const scrollElement = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
+      if (scrollElement) {
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+      }
+    }
+  }, [messages]);
+
+
+  const handleSendMessage = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage) return;
+    
+    setIsSendingMessage(true);
+    const messageData = {
+      userId: currentUserProfile.uid,
+      userName: currentUserProfile.name,
+      userAvatar: currentUserProfile.avatar,
+      text: newMessage.trim(),
+      timestamp: serverTimestamp()
+    };
+    try {
+      const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
+      await addDoc(messagesColRef, messageData);
+      setNewMessage('');
+    } catch (error) {
+      console.error("Error sending message: ", error);
+      toast({ title: "Error Sending Message", variant: "destructive"});
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+  
+  const handleLeaveRoom = async () => {
+    if (!currentUserProfile || !roomId || !roomData) return;
+    try {
+        const roomDocRef = doc(db, 'studyRooms', roomId);
+        // Find the specific member object to remove. Firestore needs the exact object.
+        const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
+        if (memberToRemove) {
+            await updateDoc(roomDocRef, {
+                members: arrayRemove(memberToRemove),
+                memberCount: (roomData.members?.length || 1) - 1
+            });
+        }
+        toast({ title: "Left Room", description: `You have left ${roomData.name}.`});
+        router.push('/study-rooms');
+    } catch (error) {
+        console.error("Error leaving room: ", error);
+        toast({ title: "Error Leaving Room", description: (error as Error).message, variant: "destructive"});
+    }
   };
 
-  if (authLoading || (user && isLoadingRoomData)) {
+
+  if (authLoading || isLoadingRoom) {
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -103,7 +187,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
     );
   }
 
-  if (!user && !authLoading) {
+  if (!user && !authLoading) { // Should be handled by useEffect but as a fallback
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -113,30 +197,41 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
         </div>
     );
   }
+  
+  if (!roomData) { // Room data failed to load or doesn't exist
+     return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+            <AlertCircle className="w-16 h-16 text-destructive mb-4" />
+            <h1 className="text-2xl font-bold mb-2">Room Not Found</h1>
+            <p className="text-muted-foreground mb-4">This study room may no longer exist.</p>
+            <Button onClick={() => router.push('/study-rooms')}>Back to Rooms</Button>
+        </div>
+    );
+  }
 
 
   return (
     <div className="flex flex-col h-[calc(100vh-theme(space.16)-1rem)] sm:h-[calc(100vh-theme(space.16)-2rem)]">
       <PageHeader
-        title={roomName}
-        description={`Topic: ${topic}`}
+        title={roomData.name}
+        description={`Topic: ${roomData.topic}`}
         actions={
           <div className="flex flex-wrap gap-2 items-center">
             <div className="flex items-center -space-x-2 mr-2">
-              {members.slice(0, 3).map(member => (
-                <Avatar key={member.id} className="h-8 w-8 border-2 border-background">
+              {roomData.members?.slice(0, 3).map(member => (
+                <Avatar key={member.uid} className="h-8 w-8 border-2 border-background">
                   <AvatarImage src={member.avatar || 'https://placehold.co/40x40.png'} alt={member.name} data-ai-hint="user avatar" />
-                  <AvatarFallback>{member.name.substring(0,1)}</AvatarFallback>
+                  <AvatarFallback>{member.name.substring(0,1).toUpperCase()}</AvatarFallback>
                 </Avatar>
               ))}
-              {members.length > 3 && (
+              {(roomData.members?.length || 0) > 3 && (
                 <Avatar className="h-8 w-8 border-2 border-background">
-                   <AvatarFallback>+{members.length - 3}</AvatarFallback>
+                   <AvatarFallback>+{(roomData.members?.length || 0) - 3}</AvatarFallback>
                 </Avatar>
               )}
             </div>
-            <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {members.length} Members</Button>
-            <Button variant="destructive" size="sm" onClick={() => alert('Leave room (Not implemented)')}><LogOut className="mr-2 h-4 w-4" /> Leave</Button>
+            <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData.members?.length || 0} Members</Button>
+            <Button variant="destructive" size="sm" onClick={handleLeaveRoom}><LogOut className="mr-2 h-4 w-4" /> Leave</Button>
           </div>
         }
       />
@@ -145,7 +240,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
         <Card className="lg:col-span-2 flex flex-col min-h-[300px] md:min-h-[400px] lg:min-h-0"> 
           <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
             <CardTitle className="flex items-center text-lg"><Palette className="mr-2 h-5 w-5" /> Shared Whiteboard</CardTitle>
-            <Button variant="ghost" size="sm"><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
+            <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
           </CardHeader>
           <CardContent className="flex-grow flex items-center justify-center bg-muted/30 border-2 border-dashed border-muted-foreground/20 rounded-md m-2 md:m-4 p-2">
             <div className="text-center">
@@ -159,24 +254,28 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
           <CardHeader className="py-3 px-4">
             <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
           </CardHeader>
-          <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b">
+          <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={scrollAreaRef}>
             <div className="space-y-4">
               {messages.map((msg) => (
-                <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUser?.id ? 'justify-end' : 'justify-start'}`}>
-                  {msg.userId !== currentUser?.id && (
+                <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUserProfile?.uid ? 'justify-end' : 'justify-start'}`}>
+                  {msg.userId !== currentUserProfile?.uid && (
                     <Avatar className="h-8 w-8">
                       <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                      <AvatarFallback>{msg.userName.substring(0,1)}</AvatarFallback>
+                      <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'A'}</AvatarFallback>
                     </Avatar>
                   )}
-                  <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUser?.id ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted rounded-bl-none'}`}>
-                    <p className="text-xs font-semibold mb-0.5">{msg.userName} <span className="text-xs text-muted-foreground/80 ml-1 font-normal">{msg.timestamp}</span></p>
+                  <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted rounded-bl-none'}`}>
+                    <p className="text-xs font-semibold mb-0.5">{msg.userName} 
+                        <span className="text-xs text-muted-foreground/80 ml-1 font-normal">
+                            {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                        </span>
+                    </p>
                     <p className="text-sm break-words">{msg.text}</p>
                   </div>
-                   {msg.userId === currentUser?.id && (
+                   {msg.userId === currentUserProfile?.uid && (
                     <Avatar className="h-8 w-8">
                       <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                      <AvatarFallback>{msg.userName.substring(0,1)}</AvatarFallback>
+                      <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
                     </Avatar>
                   )}
                 </div>
@@ -191,10 +290,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
                 onChange={(e) => setNewMessage(e.target.value)}
                 placeholder="Type a message..."
                 className="flex-grow"
-                disabled={!currentUser}
+                disabled={!currentUserProfile || isSendingMessage}
               />
-              <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUser}>
-                <Send className="h-4 w-4" />
+              <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || newMessage.trim() === ''}>
+                {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </form>
           </CardContent>
@@ -203,3 +302,5 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id: strin
     </div>
   );
 }
+
+    

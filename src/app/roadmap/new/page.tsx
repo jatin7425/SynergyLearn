@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Target, Save, Loader2, AlertCircle } from 'lucide-react';
+import { db } from '@/lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 export default function NewRoadmapGoalPage() {
   const { user, loading: authLoading } = useAuth();
@@ -21,6 +23,7 @@ export default function NewRoadmapGoalPage() {
 
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDescription, setGoalDescription] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   
   useEffect(() => {
     if (!authLoading && !user) {
@@ -31,12 +34,30 @@ export default function NewRoadmapGoalPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      toast({ title: "Not Authenticated", description: "You must be logged in to set a goal.", variant: "destructive" });
+      return;
+    }
     if (!goalTitle.trim()) {
       toast({ title: 'Goal title is required', variant: 'destructive' });
       return;
     }
-    toast({ title: 'New Goal Set!', description: `Your goal "${goalTitle}" will be used on the Roadmap page.` });
-    router.push(`/roadmap?newGoal=${encodeURIComponent(goalTitle)}`);
+    setIsSaving(true);
+    try {
+      const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
+      await setDoc(profileRef, { 
+        learningGoal: goalTitle.trim(),
+        learningGoalDescription: goalDescription.trim() 
+      }, { merge: true });
+      
+      toast({ title: 'New Goal Set!', description: `Your goal "${goalTitle}" has been saved.` });
+      router.push(`/roadmap`); // Navigate to roadmap, it will pick up the new goal
+    } catch (error) {
+      console.error("Error setting goal: ", error);
+      toast({ title: 'Error Setting Goal', description: (error as Error).message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (authLoading) {
@@ -84,6 +105,7 @@ export default function NewRoadmapGoalPage() {
                 onChange={(e) => setGoalTitle(e.target.value)}
                 placeholder="e.g., Master Quantum Computing"
                 required
+                disabled={isSaving}
               />
             </div>
             <div>
@@ -94,10 +116,12 @@ export default function NewRoadmapGoalPage() {
                 onChange={(e) => setGoalDescription(e.target.value)}
                 placeholder="Add some details about what this goal entails or why it's important to you."
                 rows={3}
+                disabled={isSaving}
               />
             </div>
-            <Button type="submit" className="w-full">
-              <Save className="mr-2 h-4 w-4" /> Set Goal & Continue to Roadmap
+            <Button type="submit" className="w-full" disabled={isSaving}>
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              {isSaving ? 'Saving...' : 'Set Goal & View Roadmap'}
             </Button>
           </form>
         </CardContent>
@@ -105,3 +129,5 @@ export default function NewRoadmapGoalPage() {
     </div>
   );
 }
+
+    
