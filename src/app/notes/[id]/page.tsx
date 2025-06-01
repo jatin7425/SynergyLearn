@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, updateDoc, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, updateDoc, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import {
   Dialog,
@@ -45,6 +45,7 @@ interface UserProfile {
   email: string;
   displayName: string;
   photoURL?: string | null;
+  createdAt?: Timestamp; // Added for ordering
 }
 
 
@@ -184,30 +185,50 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     }
   };
 
-  const searchUsersByEmail = async (searchEmail: string) => {
-    if (!searchEmail.trim() || !user) {
+  const searchUsersByEmail = async (searchTerm: string) => {
+    if (!searchTerm.trim() || !user) {
       setSearchResults([]);
       return;
     }
     setIsSearchingUsers(true);
+    const normalizedSearchTerm = searchTerm.toLowerCase();
+  
     try {
       const usersRef = collection(db, 'userProfiles');
-      const q = query(usersRef,
-        where('email', '>=', searchEmail.toLowerCase()),
-        where('email', '<=', searchEmail.toLowerCase() + '\uf8ff'),
-        limit(5)
-      );
+      // Fetch a pool of users (e.g., latest 100).
+      // For a production app, this might need pagination or a more sophisticated search index.
+      // Ordering by 'createdAt' helps find newer users; adjust if other ordering is better.
+      const q = query(usersRef, orderBy('createdAt', 'desc'), limit(100)); 
+      
       const querySnapshot = await getDocs(q);
-      const users: UserProfile[] = [];
+      const candidates: UserProfile[] = [];
       querySnapshot.forEach((doc) => {
-        if (doc.id !== user.uid) { // Exclude current user from results
-            users.push({ id: doc.id, ...doc.data() } as UserProfile);
+        // Exclude current user from search results
+        if (doc.id !== user.uid) { 
+          candidates.push({ id: doc.id, ...doc.data() } as UserProfile);
         }
       });
-      setSearchResults(users);
+  
+      // Client-side "contains" filtering for email and displayName
+      const filteredUsers = candidates.filter(profile =>
+        (profile.email && profile.email.toLowerCase().includes(normalizedSearchTerm)) ||
+        (profile.displayName && profile.displayName.toLowerCase().includes(normalizedSearchTerm))
+      ).slice(0, 7); // Show top 7 matches from filtered results
+  
+      setSearchResults(filteredUsers);
+  
+      if (filteredUsers.length === 0 && candidates.length > 0 && searchTerm.length > 2) {
+          toast({
+              title: "No exact matches in recent users",
+              description: "Try a different search term. Search is performed on recently registered users.",
+              variant: "default"
+          })
+      }
+  
     } catch (err) {
       console.error("Error searching users:", err);
       setSearchResults([]);
+      toast({ title: "Search Error", description: "Could not perform user search.", variant: "destructive"});
     } finally {
       setIsSearchingUsers(false);
     }
@@ -215,14 +236,14 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
-      if (emailSearchQuery.length > 2) { // Start searching after 3 characters
+      if (emailSearchQuery.length > 2) { // Start searching after 2 characters
         searchUsersByEmail(emailSearchQuery);
       } else {
         setSearchResults([]);
       }
     }, 500); // Debounce search
     return () => clearTimeout(debounceTimer);
-  }, [emailSearchQuery]);
+  }, [emailSearchQuery, user]); // Added user to dependency array for searchUsersByEmail
 
   const handleSelectUserForSharing = (profile: UserProfile) => {
     setSelectedUserForSharing(profile);
@@ -283,7 +304,11 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     try {
       await updateDoc(noteDocRef, { sharedWith: updatedSharedWith, updatedAt: serverTimestamp() });
       setNoteData(prev => prev ? { ...prev, sharedWith: updatedSharedWith } : null);
-      toast({ title: "Unshared Successfully", description: `UID: ${recipientUidToUnshare} removed from shared list.` });
+      // Find user displayName for toast
+      const unsharedUserProfileRef = doc(db, 'userProfiles', recipientUidToUnshare);
+      const unsharedUserSnap = await getDoc(unsharedUserProfileRef);
+      const unsharedUserName = unsharedUserSnap.exists() ? unsharedUserSnap.data().displayName : `UID: ${recipientUidToUnshare}`;
+      toast({ title: "Unshared Successfully", description: `${unsharedUserName} removed from shared list.` });
     } catch (error) {
       console.error("Error unsharing note: ", error);
       toast({ title: "Unsharing Failed", description: (error as Error).message, variant: "destructive" });
@@ -354,17 +379,17 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                 <DialogContent className="max-w-md">
                   <DialogHeader>
                     <DialogTitle>Share Note: {noteData?.title}</DialogTitle>
-                    <DialogDescription>Enter the email of the user you want to share this note with (read-only access).</DialogDescription>
+                    <DialogDescription>Search user by email or name to share this note with (read-only access).</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleShareNote} className="space-y-3">
                     <div>
-                      <Label htmlFor="share-email">Recipient Email</Label>
+                      <Label htmlFor="share-email">Recipient Search</Label>
                       <div className="relative">
                         <Input 
                           id="share-email" 
                           value={emailSearchQuery} 
                           onChange={(e) => setEmailSearchQuery(e.target.value)}
-                          placeholder="Search user by email..."
+                          placeholder="Search by email or name..."
                           disabled={isProcessingShare || !!selectedUserForSharing}
                           autoComplete="off"
                         />
@@ -391,7 +416,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                             >
                               <Avatar className="h-7 w-7 mr-2">
                                 <AvatarImage src={profile.photoURL || undefined} alt={profile.displayName} data-ai-hint="user avatar"/>
-                                <AvatarFallback>{profile.displayName.substring(0,1).toUpperCase()}</AvatarFallback>
+                                <AvatarFallback>{profile.displayName?.substring(0,1).toUpperCase() || profile.email.substring(0,1).toUpperCase()}</AvatarFallback>
                               </Avatar>
                               <div>
                                 <p className="text-sm font-medium">{profile.displayName}</p>
@@ -417,7 +442,8 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                         <ul className="text-sm space-y-1">
                           {Object.entries(noteData.sharedWith).map(([uid, permission]) => (
                             <li key={uid} className="flex justify-between items-center p-1.5 bg-muted/50 rounded hover:bg-muted">
-                              <span className="truncate text-xs" title={uid}>{uid} ({permission})</span>
+                              {/* Placeholder for fetching user details by UID for display */}
+                              <span className="truncate text-xs" title={uid}>User UID: {uid} ({permission})</span>
                               <Button 
                                  variant="ghost" 
                                  size="icon" 
