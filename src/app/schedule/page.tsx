@@ -18,8 +18,8 @@ import { useToast } from '@/hooks/use-toast';
 import { generateWeeklyOutline, type GenerateWeeklyOutlineInput, type GenerateWeeklyOutlineOutput, type WeeklyGoalItem } from '@/ai/flows/generate-weekly-outline';
 import { generateDailyTasks, type GenerateDailyTasksInput, type GenerateDailyTasksOutput, type DailyTask } from '@/ai/flows/generate-daily-tasks';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
-import { format, parseISO } from 'date-fns';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion, query, where } from 'firebase/firestore';
+import { format, parseISO, startOfDay, endOfDay, differenceInSeconds } from 'date-fns';
 
 interface StoredScheduleData {
   id: string; // mainSchedule
@@ -47,7 +47,32 @@ interface TimeTrackingState {
   currentSessionId?: string | null;
 }
 
+interface TimeLog {
+    id?: string;
+    type: 'study_session_start' | 'study_session_end';
+    startTime: Timestamp;
+    endTime: Timestamp | null;
+    durationMinutes: number;
+    activities: Array<{type: string, timestamp: Timestamp}>;
+}
+
+
 const allDaysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const formatDuration = (totalSeconds: number, style: 'hms' | 'hm' = 'hms'): string => {
+  if (isNaN(totalSeconds) || totalSeconds < 0) return style === 'hms' ? "00:00:00" : "0h 0m";
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (style === 'hms') {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  } else { // hm
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  }
+};
 
 export default function SchedulePage() {
   const { user, loading: authLoading } = useAuth();
@@ -75,6 +100,12 @@ export default function SchedulePage() {
 
   const [timeTrackingState, setTimeTrackingState] = useState<TimeTrackingState | null>(null);
   const [isLoadingTimeState, setIsLoadingTimeState] = useState(true);
+
+  // For live display
+  const [currentSessionDisplay, setCurrentSessionDisplay] = useState("00:00:00");
+  const [currentBreakDisplay, setCurrentBreakDisplay] = useState("00:00:00");
+  const [currentLunchDisplay, setCurrentLunchDisplay] = useState("00:00:00");
+  const [totalStudiedTodayDisplay, setTotalStudiedTodayDisplay] = useState("0h 0m");
 
   const handleHolidayChange = (day: string) => {
     setSelectedHolidays(prev =>
@@ -147,7 +178,6 @@ export default function SchedulePage() {
     const unsubscribeTimeState = onSnapshot(timeStateDocRef, async (docSnap) => {
       if (docSnap.exists()) {
         const fetchedState = docSnap.data() as TimeTrackingState;
-        
         if (fetchedState.status !== 'clocked_out' && fetchedState.currentSessionId) {
           const logDocRef = doc(db, 'users', user.uid, 'timeTrackingLogs', fetchedState.currentSessionId);
           const logDocSnap = await getDoc(logDocRef);
@@ -179,6 +209,81 @@ export default function SchedulePage() {
       unsubscribeTimeState();
     };
   }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeMainTab]);
+
+  // Live timer effect for current session/break/lunch
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (timeTrackingState) {
+      const now = new Date();
+      if (timeTrackingState.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
+        intervalId = setInterval(() => {
+          const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
+          setCurrentSessionDisplay(formatDuration(elapsedSeconds, 'hms'));
+        }, 1000);
+      } else if (timeTrackingState.status === 'on_break' && timeTrackingState.lastBreakStartTime) {
+        intervalId = setInterval(() => {
+          const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastBreakStartTime!.toDate());
+          setCurrentBreakDisplay(formatDuration(elapsedSeconds, 'hms'));
+        }, 1000);
+         // Also keep session timer running if on break based on lastClockInTime
+        if (timeTrackingState.lastClockInTime) {
+            const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
+            setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
+        }
+      } else if (timeTrackingState.status === 'on_lunch' && timeTrackingState.lastLunchStartTime) {
+        intervalId = setInterval(() => {
+          const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastLunchStartTime!.toDate());
+          setCurrentLunchDisplay(formatDuration(elapsedSeconds, 'hms'));
+        }, 1000);
+        // Also keep session timer running if on lunch
+        if (timeTrackingState.lastClockInTime) {
+            const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
+            setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
+        }
+      } else {
+        setCurrentSessionDisplay("00:00:00");
+        setCurrentBreakDisplay("00:00:00");
+        setCurrentLunchDisplay("00:00:00");
+      }
+    }
+    return () => clearInterval(intervalId);
+  }, [timeTrackingState]);
+
+
+  // Effect for total study time today
+  useEffect(() => {
+    if (!user) return;
+
+    const today_start = startOfDay(new Date());
+    const today_end = endOfDay(new Date());
+
+    const logsCollectionRef = collection(db, 'users', user.uid, 'timeTrackingLogs');
+    const q = query(logsCollectionRef, 
+                    where('startTime', '>=', Timestamp.fromDate(today_start)),
+                    where('startTime', '<=', Timestamp.fromDate(today_end))
+                   );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      let totalMinutesToday = 0;
+      snapshot.forEach((doc) => {
+        const log = doc.data() as TimeLog;
+        if (log.endTime && log.durationMinutes) { // Completed session
+          totalMinutesToday += log.durationMinutes;
+        }
+      });
+      
+      // If currently clocked in (and not on break/lunch), add live session time
+      if (timeTrackingState?.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
+          const liveSessionSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime.toDate());
+          totalMinutesToday += Math.floor(liveSessionSeconds / 60);
+      }
+      setTotalStudiedTodayDisplay(formatDuration(totalMinutesToday * 60, 'hm'));
+    });
+
+    return () => unsubscribe();
+  }, [user, timeTrackingState]);
+
 
   const handleGenerateWeeklyOutline = async (e: FormEvent) => {
     e.preventDefault();
@@ -299,7 +404,6 @@ export default function SchedulePage() {
     const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id; 
     const newLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', newSessionId);
     const newLog = {
-        // sessionId: newSessionId, // Not strictly needed if doc ID is the session ID
         type: 'study_session_start',
         startTime: serverTimestamp(),
         endTime: null,
@@ -311,7 +415,7 @@ export default function SchedulePage() {
         await setDoc(newLogRef, newLog);
         await updateTimeTrackingState({ 
             status: 'clocked_in', 
-            lastClockInTime: serverTimestamp() as Timestamp, 
+            lastClockInTime: Timestamp.now(), 
             currentSessionId: newSessionId 
         });
     } catch (error) {
@@ -439,9 +543,13 @@ export default function SchedulePage() {
       <Card>
         <CardHeader>
             <CardTitle className="flex items-center"><Clock className="mr-2 h-5 w-5 text-primary" /> Time Tracking</CardTitle>
-            <CardDescription>
-                Current Status: <span className="font-semibold capitalize">{timeTrackingState?.status.replace('_', ' ') || 'Loading...'}</span>
-            </CardDescription>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm mt-2">
+                <p>Status: <span className="font-semibold capitalize">{timeTrackingState?.status.replace('_', ' ') || 'Loading...'}</span></p>
+                <p>Session: <span className="font-semibold">{currentSessionDisplay}</span></p>
+                {timeTrackingState?.status === 'on_break' && <p>On Break: <span className="font-semibold">{currentBreakDisplay}</span></p>}
+                {timeTrackingState?.status === 'on_lunch' && <p>On Lunch: <span className="font-semibold">{currentLunchDisplay}</span></p>}
+                <p>Studied Today: <span className="font-semibold">{totalStudiedTodayDisplay}</span></p>
+            </div>
         </CardHeader>
         <CardContent className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
             <Button onClick={handleClockIn} disabled={!canClockIn || isLoadingTimeState} className="bg-green-500 hover:bg-green-600 text-white"><Play className="mr-2 h-4 w-4" /> Clock In</Button>
@@ -633,3 +741,5 @@ export default function SchedulePage() {
     </div>
   );
 }
+
+    
