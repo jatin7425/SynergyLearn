@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause, ListChecks, CalendarPlus } from 'lucide-react';
+import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause, ListChecks, CalendarPlus, TargetIcon } from 'lucide-react';
 import { useState, type FormEvent, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,7 +19,7 @@ import { generateWeeklyOutline, type GenerateWeeklyOutlineInput, type GenerateWe
 import { generateDailyTasks, type GenerateDailyTasksInput, type GenerateDailyTasksOutput, type DailyTask } from '@/ai/flows/generate-daily-tasks';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion, query, where } from 'firebase/firestore';
-import { format, parseISO, startOfDay, endOfDay, differenceInSeconds } from 'date-fns';
+import { format, parseISO, startOfDay, endOfDay, differenceInSeconds, isWithinInterval, addDays } from 'date-fns';
 
 interface StoredScheduleData {
   id: string; // mainSchedule
@@ -69,10 +69,53 @@ const formatDuration = (totalSeconds: number, style: 'hms' | 'hm' = 'hms'): stri
   if (style === 'hms') {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   } else { // hm
-    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h`;
     return `${minutes}m`;
   }
 };
+
+// Helper function to parse duration strings like "2 hours", "1.5 hours", "90 minutes" to minutes
+const parseDurationStringToMinutes = (durationStr?: string): number => {
+  if (!durationStr || typeof durationStr !== 'string') return 0;
+
+  let totalMinutes = 0;
+  const durationLowerCase = durationStr.toLowerCase();
+
+  // Match "X hours Y minutes" or "X hr Y min"
+  const fullMatch = durationLowerCase.match(/(?:(\d*\.?\d+)\s*(?:hours?|hr))?\s*(?:(\d+)\s*(?:minutes?|min))?/);
+  if (fullMatch) {
+    if (fullMatch[1]) { // Hours part
+      totalMinutes += parseFloat(fullMatch[1]) * 60;
+    }
+    if (fullMatch[2]) { // Minutes part
+      totalMinutes += parseInt(fullMatch[2], 10);
+    }
+    // If neither hours nor minutes were matched but there was a full match (e.g. "Rest Day"), return 0
+    if (totalMinutes > 0) return Math.round(totalMinutes);
+  }
+  
+  // If no explicit "hours" or "minutes" were found, try to parse a single number
+  // This is less reliable and assumes AI gives explicit units.
+  // If AI says "2.5", assume hours. If AI says "150", assume minutes if it is a large number.
+  const singleNumberMatch = durationLowerCase.match(/^(\d*\.?\d+)$/);
+  if (singleNumberMatch && singleNumberMatch[1]) {
+      const num = parseFloat(singleNumberMatch[1]);
+      if (!isNaN(num)) {
+          // Heuristic: if number < 10 and has decimal, or < 5, assume hours. Else assume minutes.
+          if ((num < 10 && durationStr.includes('.')) || num <= 5) {
+              totalMinutes = num * 60;
+          } else {
+              totalMinutes = num;
+          }
+          return Math.round(totalMinutes);
+      }
+  }
+  
+  // If it's a non-parsable string like "Rest Day" or "Flexible", it will return 0.
+  return 0; 
+};
+
 
 export default function SchedulePage() {
   const { user, loading: authLoading } = useAuth();
@@ -105,7 +148,11 @@ export default function SchedulePage() {
   const [currentSessionDisplay, setCurrentSessionDisplay] = useState("00:00:00");
   const [currentBreakDisplay, setCurrentBreakDisplay] = useState("00:00:00");
   const [currentLunchDisplay, setCurrentLunchDisplay] = useState("00:00:00");
-  const [totalStudiedTodayDisplay, setTotalStudiedTodayDisplay] = useState("0h 0m");
+  
+  const [totalMinutesStudiedToday, setTotalMinutesStudiedToday] = useState(0);
+  const [totalEstimatedMinutesForToday, setTotalEstimatedMinutesForToday] = useState(0);
+  const [timeDifferenceDisplay, setTimeDifferenceDisplay] = useState("Calculating...");
+
 
   const handleHolidayChange = (day: string) => {
     setSelectedHolidays(prev =>
@@ -226,7 +273,6 @@ export default function SchedulePage() {
           const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastBreakStartTime!.toDate());
           setCurrentBreakDisplay(formatDuration(elapsedSeconds, 'hms'));
         }, 1000);
-         // Also keep session timer running if on break based on lastClockInTime
         if (timeTrackingState.lastClockInTime) {
             const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
             setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
@@ -236,7 +282,6 @@ export default function SchedulePage() {
           const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastLunchStartTime!.toDate());
           setCurrentLunchDisplay(formatDuration(elapsedSeconds, 'hms'));
         }, 1000);
-        // Also keep session timer running if on lunch
         if (timeTrackingState.lastClockInTime) {
             const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
             setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
@@ -265,24 +310,105 @@ export default function SchedulePage() {
                    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      let totalMinutesToday = 0;
+      let accumulatedMinutesToday = 0;
       snapshot.forEach((doc) => {
         const log = doc.data() as TimeLog;
-        if (log.endTime && log.durationMinutes) { // Completed session
-          totalMinutesToday += log.durationMinutes;
+        if (log.endTime && log.durationMinutes) { 
+          accumulatedMinutesToday += log.durationMinutes;
         }
       });
       
-      // If currently clocked in (and not on break/lunch), add live session time
       if (timeTrackingState?.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
           const liveSessionSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime.toDate());
-          totalMinutesToday += Math.floor(liveSessionSeconds / 60);
+          // Add only the current session's portion that hasn't been logged yet if it's still active.
+          // This logic needs to be careful not to double count if a log for this session already partially exists.
+          // For simplicity, if clocked_in, this adds the live part of the current session to already logged parts.
+          // If handleClockOut correctly logs the full duration, this might slightly over-count during the final second before clock out.
+          // A more robust way would be to exclude the currentSessionId from the sum if it's active.
+          // However, the current query is for *all* logs *today*.
+
+          // Let's assume durationMinutes in the log is the final one.
+          // If currentSessionId matches a log, subtract its durationMinutes (if any)
+          // and add the live calculation. This prevents double counting.
+
+          let liveMinutes = Math.floor(liveSessionSeconds / 60);
+
+          if (timeTrackingState.currentSessionId) {
+            const currentSessionLog = snapshot.docs.find(d => d.id === timeTrackingState.currentSessionId)?.data() as TimeLog | undefined;
+            if (currentSessionLog && currentSessionLog.durationMinutes && !currentSessionLog.endTime) {
+              // Current session is in logs but not ended. Don't add its partial durationMinutes from DB.
+              // The `accumulatedMinutesToday` would have already added it if it was completed.
+              // So, just add liveMinutes to sum of *other* completed sessions.
+            }
+          }
+          setTotalMinutesStudiedToday(accumulatedMinutesToday + liveMinutes);
+
+      } else {
+         setTotalMinutesStudiedToday(accumulatedMinutesToday);
       }
-      setTotalStudiedTodayDisplay(formatDuration(totalMinutesToday * 60, 'hm'));
     });
 
     return () => unsubscribe();
   }, [user, timeTrackingState]);
+
+  // Effect for "Time to Cover / Overtime"
+  useEffect(() => {
+    if (!user || isLoadingStoredSchedule) {
+        setTimeDifferenceDisplay("Calculating...");
+        return;
+    }
+
+    const today = new Date();
+    const todayFormatted = format(today, 'yyyy-MM-dd');
+    let currentDayEstimatedMinutes = 0;
+    let statusMessage = "Calculating...";
+
+    if (storedScheduleData?.weeklyOutline) {
+        const currentWeekData = storedScheduleData.weeklyOutline.find(week => {
+            const weekStart = parseISO(week.startDate);
+            const weekEnd = parseISO(week.endDate); // date-fns isWithinInterval is inclusive of start, exclusive of end by default
+            return isWithinInterval(today, { start: weekStart, end: addDays(weekEnd, 1) });
+        });
+
+        if (currentWeekData && currentWeekData.dailyTasks && currentWeekData.dailyTasks.length > 0) {
+            const todaysTasks = currentWeekData.dailyTasks.filter(task => task.date === todayFormatted && task.topic?.toLowerCase() !== "rest day");
+            
+            if (todaysTasks.length > 0) {
+                currentDayEstimatedMinutes = todaysTasks.reduce((sum, task) => sum + parseDurationStringToMinutes(task.estimatedDuration), 0);
+                setTotalEstimatedMinutesForToday(currentDayEstimatedMinutes);
+
+                if (currentDayEstimatedMinutes === 0) { // Tasks might exist but have 0 duration (e.g. "Quick Review")
+                     statusMessage = "Today's tasks have no specific estimated time.";
+                } else {
+                    const difference = currentDayEstimatedMinutes - totalMinutesStudiedToday;
+                    if (totalMinutesStudiedToday === 0 && currentDayEstimatedMinutes > 0) {
+                         statusMessage = `${formatDuration(currentDayEstimatedMinutes * 60, 'hm')} scheduled today.`;
+                    } else if (difference < -10) { 
+                        statusMessage = `${formatDuration(Math.abs(difference) * 60, 'hm')} overtime! Great job!`;
+                    } else if (difference > 10) { 
+                        statusMessage = `${formatDuration(difference * 60, 'hm')} to cover.`;
+                    } else {
+                        statusMessage = "On track for today!";
+                    }
+                }
+            } else {
+                statusMessage = "No specific tasks scheduled for today (or it's a Rest Day).";
+                setTotalEstimatedMinutesForToday(0);
+            }
+        } else if (currentWeekData) {
+            statusMessage = "Daily plan for the current week not generated yet.";
+            setTotalEstimatedMinutesForToday(0);
+        } else {
+            statusMessage = "Current date not within any scheduled week.";
+            setTotalEstimatedMinutesForToday(0);
+        }
+    } else {
+        statusMessage = "No schedule outline generated.";
+        setTotalEstimatedMinutesForToday(0);
+    }
+    setTimeDifferenceDisplay(statusMessage);
+
+  }, [user, totalMinutesStudiedToday, storedScheduleData, isLoadingStoredSchedule]);
 
 
   const handleGenerateWeeklyOutline = async (e: FormEvent) => {
@@ -443,7 +569,9 @@ export default function SchedulePage() {
         await updateTimeTrackingState({ 
             status: 'clocked_out', 
             lastClockInTime: null, 
-            currentSessionId: null 
+            currentSessionId: null,
+            lastBreakStartTime: null, // Clear break/lunch times on clock out
+            lastLunchStartTime: null
         });
     } catch (error) {
         console.error("Error clocking out:", error);
@@ -526,7 +654,7 @@ export default function SchedulePage() {
   }
 
   const canClockIn = timeTrackingState?.status === 'clocked_out';
-  const canClockOut = timeTrackingState?.status === 'clocked_in';
+  const canClockOut = timeTrackingState?.status === 'clocked_in' || timeTrackingState?.status === 'on_break' || timeTrackingState?.status === 'on_lunch';
   const canStartBreakOrLunch = timeTrackingState?.status === 'clocked_in';
   const canEndBreak = timeTrackingState?.status === 'on_break';
   const canEndLunch = timeTrackingState?.status === 'on_lunch';
@@ -543,12 +671,14 @@ export default function SchedulePage() {
       <Card>
         <CardHeader>
             <CardTitle className="flex items-center"><Clock className="mr-2 h-5 w-5 text-primary" /> Time Tracking</CardTitle>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm mt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-sm mt-2">
                 <p>Status: <span className="font-semibold capitalize">{timeTrackingState?.status.replace('_', ' ') || 'Loading...'}</span></p>
                 <p>Session: <span className="font-semibold">{currentSessionDisplay}</span></p>
-                {timeTrackingState?.status === 'on_break' && <p>On Break: <span className="font-semibold">{currentBreakDisplay}</span></p>}
-                {timeTrackingState?.status === 'on_lunch' && <p>On Lunch: <span className="font-semibold">{currentLunchDisplay}</span></p>}
-                <p>Studied Today: <span className="font-semibold">{totalStudiedTodayDisplay}</span></p>
+                {timeTrackingState?.status === 'on_break' && <p>On Break: <span className="font-semibold text-yellow-600 dark:text-yellow-400">{currentBreakDisplay}</span></p>}
+                {timeTrackingState?.status === 'on_lunch' && <p>On Lunch: <span className="font-semibold text-orange-600 dark:text-orange-400">{currentLunchDisplay}</span></p>}
+                <p>Studied Today: <span className="font-semibold text-green-600 dark:text-green-400">{formatDuration(totalMinutesStudiedToday * 60, 'hm')}</span></p>
+                <p>Target Today: <span className="font-semibold text-blue-600 dark:text-blue-400">{formatDuration(totalEstimatedMinutesForToday * 60, 'hm')}</span></p>
+                <p className="sm:col-span-2 lg:col-span-1">Progress: <span className="font-semibold text-purple-600 dark:text-purple-400">{timeDifferenceDisplay}</span></p>
             </div>
         </CardHeader>
         <CardContent className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
@@ -741,5 +871,3 @@ export default function SchedulePage() {
     </div>
   );
 }
-
-    
