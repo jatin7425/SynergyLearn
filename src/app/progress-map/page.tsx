@@ -185,7 +185,7 @@ export default function ProgressMapPage() {
 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full">
       <PageHeader title="Your Learning Journey" description={`Goal: ${profileLearningGoal}`} />
 
       <div className="overflow-x-auto pb-4">
