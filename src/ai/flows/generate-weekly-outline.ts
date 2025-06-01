@@ -10,7 +10,7 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-import { addDays, format, parseISO, getDay } from 'date-fns';
+import { addDays, format, parseISO } from 'date-fns';
 
 
 const GenerateWeeklyOutlineInputSchema = z.object({
@@ -120,3 +120,4 @@ Example output item for 'weeklyOutline':
 Provide a concise 'summary' of the overall weekly plan if you wish.
 `,
 });
+
