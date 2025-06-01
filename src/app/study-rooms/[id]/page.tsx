@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2 } from 'lucide-react';
-import { useState, useEffect, use, FormEvent, useRef } from 'react'; 
+import { useState, useEffect, use, FormEvent, useRef } from 'react';
 import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
@@ -17,34 +17,34 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 
-interface Member { 
-  uid: string; 
-  name: string; 
+interface Member {
+  uid: string;
+  name: string;
   avatar?: string;
-  joinedAt?: Timestamp; 
+  joinedAt?: Timestamp;
 }
 interface RoomData {
   name: string;
   topic: string;
-  members: Member[]; 
+  members: Member[];
   memberCount: number;
   createdBy: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }
-interface Message { 
-  id: string; 
-  userId: string; 
-  userName: string; 
-  userAvatar?: string; 
-  text: string; 
-  timestamp: Timestamp | null; 
+interface Message {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  text: string;
+  timestamp: Timestamp | null;
 }
 
-export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) { 
-  const resolvedParams = use(props.params); 
+export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) {
+  const resolvedParams = use(props.params);
   const { id: roomId } = resolvedParams || {};
-  
+
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -58,10 +58,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
 
-  const currentUserProfile = user ? { 
-    uid: user.uid, 
-    name: user.displayName || user.email?.split('@')[0] || 'Anonymous', 
-    avatar: user.photoURL || `https://placehold.co/40x40.png` 
+  const currentUserProfile = user ? {
+    uid: user.uid,
+    name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
+    avatar: user.photoURL || `https://placehold.co/40x40.png`
   } : null;
 
   useEffect(() => {
@@ -79,12 +79,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     const unsubscribeRoom = onSnapshot(roomDocRef, async (docSnap) => {
         if (docSnap.exists()) {
             const fetchedRoomData = docSnap.data() as RoomData;
-            
+
             const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
             if (!isMember) {
-                const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() }; 
+                const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
                 const roomUpdateData = {
-                    members: arrayUnion(memberData), 
+                    members: arrayUnion(memberData),
                     memberCount: (fetchedRoomData.members?.length || 0) + 1,
                     updatedAt: serverTimestamp()
                 };
@@ -94,23 +94,32 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                     const firebaseError = err as FirebaseError;
                     console.error("Error joining room: ", firebaseError);
                     if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-                        console.error("Firestore 'update' for /studyRooms DENIED. Data payload for joining (arrayUnion):", JSON.stringify(memberData, (key, value) => {
-                           if (value && typeof value === 'object') {
-                                if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                                return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
-                                }
-                                if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                                return `FieldValue.${(value as any)._methodName}()`;
-                                }
+                        console.error(
+                          `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${user?.uid || 'N/A'}.` +
+                          `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
+                          `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+                          `\nAttempted member data (for arrayUnion):`,
+                          JSON.stringify(memberData, (key, value) => {
+                            if (value && typeof value === 'object') {
+                              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+                              }
+                              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                                return { _methodName: (value as any)._methodName };
+                              }
                             }
                             return value;
-                        }, 2));
-                        console.error("Room update for memberCount and updatedAt:", JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
-                        toast({ 
-                          title: "Error Joining Room: Permissions", 
-                          description: "Could not join room due to permission issues. Check console for details.", 
+                          }, 2)
+                        );
+                        console.error(
+                          `Attempted room update data (memberCount, updatedAt):`,
+                          JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
+                        );
+                        toast({
+                          title: "Error Joining Room: Permissions",
+                          description: "Could not join room due to security rule denial. Check browser console for data details.",
                           variant: "destructive",
-                          duration: 10000
+                          duration: 15000
                         });
                     } else {
                         toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
@@ -129,7 +138,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         setIsLoadingRoom(false);
         router.push('/study-rooms');
     });
-    
+
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -160,7 +169,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage) return;
-    
+
     setIsSendingMessage(true);
     const messageData = {
       userId: currentUserProfile.uid,
@@ -173,7 +182,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
-      
+
       const roomDocRef = doc(db, 'studyRooms', roomId);
       await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
 
@@ -181,23 +190,32 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error("Firestore 'create' for /studyRooms/.../messages DENIED. Message data payload:", JSON.stringify(messageData, (key, value) => {
-           if (value && typeof value === 'object') {
-                if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
-                }
-                if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                return `FieldValue.${(value as any)._methodName}()`;
-                }
+        console.error(
+          `Firestore 'create' for /studyRooms/${roomId}/messages OR 'update' for /studyRooms/${roomId} (for updatedAt) DENIED. Client User UID: ${user?.uid || 'N/A'}.` +
+          `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
+          `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+          `\nAttempted message data:`,
+          JSON.stringify(messageData, (key, value) => {
+            if (value && typeof value === 'object') {
+              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+              }
+              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                return { _methodName: (value as any)._methodName };
+              }
             }
             return value;
-        }, 2));
-        console.error("Attempted room update for updatedAt:", JSON.stringify({ updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
-         toast({ 
-          title: "Error Sending Message: Permissions", 
-          description: "Could not send message due to permission issues. Check console for details.", 
+          }, 2)
+        );
+        console.error(
+          `Attempted room update data (for updatedAt):`,
+          JSON.stringify({ updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
+        );
+         toast({
+          title: "Error Sending Message: Permissions",
+          description: "Could not send message due to security rule denial. Check browser console for data details.",
           variant: "destructive",
-          duration: 10000
+          duration: 15000
         });
       } else {
         toast({ title: "Error Sending Message", description: firebaseError.message, variant: "destructive"});
@@ -206,10 +224,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       setIsSendingMessage(false);
     }
   };
-  
+
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
-    
+
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     if (!memberToRemove) {
         toast({title: "Error", description: "Cannot leave room, member data not found.", variant: "destructive"});
@@ -231,23 +249,32 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         const firebaseError = error as FirebaseError;
         console.error("Error leaving room: ", firebaseError);
         if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-            console.error("Firestore 'update' for /studyRooms DENIED. Data payload for leaving (arrayRemove):", JSON.stringify(memberToRemove, (key, value) => {
-               if (value && typeof value === 'object') {
-                    if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                    return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
-                    }
-                    if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                    return `FieldValue.${(value as any)._methodName}()`;
-                    }
+            console.error(
+              `Firestore 'update' for /studyRooms/${roomId} DENIED (leaving room). Client User UID: ${user?.uid || 'N/A'}.` +
+              `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
+              `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+              `\nAttempted member data (for arrayRemove):`,
+              JSON.stringify(memberToRemove, (key, value) => {
+                if (value && typeof value === 'object') {
+                  if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                    return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+                  }
+                  if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                    return { _methodName: (value as any)._methodName };
+                  }
                 }
                 return value;
-            }, 2));
-            console.error("Room update for memberCount and updatedAt:", JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
-             toast({ 
-              title: "Error Leaving Room: Permissions", 
-              description: "Could not leave room due to permission issues. Check console for details.", 
+              }, 2)
+            );
+            console.error(
+              `Attempted room update data (memberCount, updatedAt):`,
+              JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
+            );
+             toast({
+              title: "Error Leaving Room: Permissions",
+              description: "Could not leave room due to security rule denial. Check browser console for data details.",
               variant: "destructive",
-              duration: 10000
+              duration: 15000
             });
         } else {
             toast({ title: "Error Leaving Room", description: firebaseError.message, variant: "destructive"});
@@ -256,7 +283,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   };
 
 
-  if (authLoading || (isLoadingRoom && user)) { 
+  if (authLoading || (isLoadingRoom && user)) {
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -264,7 +291,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
 
-  if (!user && !authLoading) { 
+  if (!user && !authLoading) {
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -274,8 +301,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </div>
     );
   }
-  
-  if (!roomData && !isLoadingRoom) { 
+
+  if (!roomData && !isLoadingRoom) {
      return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -314,7 +341,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       />
 
       <div className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
-        <Card className="lg:col-span-2 flex flex-col min-h-[300px] md:min-h-[400px] lg:min-h-0"> 
+        <Card className="lg:col-span-2 flex flex-col min-h-[300px] md:min-h-[400px] lg:min-h-0">
           <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
             <CardTitle className="flex items-center text-lg"><Palette className="mr-2 h-5 w-5" /> Shared Whiteboard</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
@@ -327,7 +354,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           </CardContent>
         </Card>
 
-        <Card className="flex flex-col h-full max-h-[60vh] sm:max-h-[70vh] lg:max-h-full"> 
+        <Card className="flex flex-col h-full max-h-[60vh] sm:max-h-[70vh] lg:max-h-full">
           <CardHeader className="py-3 px-4">
             <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
           </CardHeader>
@@ -342,7 +369,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                     </Avatar>
                   )}
                   <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted rounded-bl-none'}`}>
-                    <p className="text-xs font-semibold mb-0.5">{msg.userName} 
+                    <p className="text-xs font-semibold mb-0.5">{msg.userName}
                         <span className="text-xs text-muted-foreground/80 ml-1 font-normal">
                             {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
                         </span>
@@ -379,5 +406,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
-
-    

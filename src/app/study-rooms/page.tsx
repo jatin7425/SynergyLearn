@@ -31,11 +31,11 @@ interface StudyRoom {
   id: string; // Firestore document ID
   name: string;
   topic: string;
-  memberCount: number; 
+  memberCount: number;
   members: { uid: string; name: string; avatar?: string; joinedAt: Timestamp }[];
   createdBy: string; // User UID
   createdAt: Timestamp;
-  updatedAt?: Timestamp; 
+  updatedAt?: Timestamp;
 }
 
 const MAX_ROOM_NAME_LENGTH = 99;
@@ -46,14 +46,14 @@ export default function StudyRoomsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
-  
+
   const [studyRooms, setStudyRooms] = useState<StudyRoom[]>([]);
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [showCreateRoomDialog, setShowCreateRoomDialog] = useState(false);
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomTopic, setNewRoomTopic] = useState('');
-  
+
   useEffect(() => {
     if (!authLoading && !user) {
       toast({ title: "Authentication Required", description: "Please log in to access study rooms.", variant: "destructive" });
@@ -96,7 +96,7 @@ export default function StudyRoomsPage() {
       toast({ title: "Room Name Required", description: "Please enter a name for the room.", variant: "destructive"});
       return;
     }
-    if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
+     if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
       toast({ title: "Room Name Too Long", description: `Name must be ${MAX_ROOM_NAME_LENGTH} characters or less. Current: ${trimmedName.length}`, variant: "destructive"});
       return;
     }
@@ -109,25 +109,25 @@ export default function StudyRoomsPage() {
       return;
     }
 
+
     setIsCreatingRoom(true);
 
     const creatorAsMember = {
       uid: user.uid,
-      name: user.displayName || user.email?.split('@')[0] || 'Anonymous User',
-      avatar: user.photoURL || `https://placehold.co/40x40.png`,
-      joinedAt: Timestamp.now() 
+      name: user.displayName || user.email?.split('@')[0] || 'Anonymous User', // Get user's display name or part of email
+      avatar: user.photoURL || `https://placehold.co/40x40.png`, // Get user's photo URL or a placeholder
+      joinedAt: Timestamp.now() // Use client-side Timestamp.now() for initial member
     };
 
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 1, 
-      members: [creatorAsMember], 
+      memberCount: 1, // Start with creator as 1 member
+      members: [creatorAsMember], // Add creator to members list
       createdBy: user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
-
     try {
       const roomsColRef = collection(db, 'studyRooms');
       const docRef = await addDoc(roomsColRef, newRoomData);
@@ -135,27 +135,35 @@ export default function StudyRoomsPage() {
       setNewRoomName('');
       setNewRoomTopic('');
       setShowCreateRoomDialog(false);
-      router.push(`/study-rooms/${docRef.id}`); 
+      router.push(`/study-rooms/${docRef.id}`);
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error creating room: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error(`Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}. Attempted data payload:`, JSON.stringify(newRoomData, (key, value) => {
-          if (value && typeof value === 'object') {
-            if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-              return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+        console.error(
+          `Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}.` +
+          `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
+          `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+          `\nAttempted data payload:`,
+          JSON.stringify(newRoomData, (key, value) => {
+            if (value && typeof value === 'object') {
+              // For client-generated Firestore Timestamps
+              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+              }
+              // For FieldValue.serverTimestamp() sentinels
+              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                return { _methodName: (value as any)._methodName };
+              }
             }
-            if (value && typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-              return `FieldValue.${(value as any)._methodName}()`;
-            }
-          }
-          return value;
-        }, 2));
-        toast({ 
-          title: "Creation Failed: Permissions", 
-          description: "Could not create room. Check browser console for data details to use with Firestore Rules Playground. Ensure name/topic lengths are valid and rules are correctly deployed.", 
+            return value;
+          }, 2)
+        );
+        toast({
+          title: "Room Creation Failed: Permissions",
+          description: "Could not create room due to security rule denial. Check browser console for data details to use with Firestore Rules Playground. Ensure your deployed rules match the expected configuration and input lengths are valid.",
           variant: "destructive",
-          duration: 15000 
+          duration: 15000
         });
       } else {
         toast({ title: "Creation Failed", description: firebaseError.message, variant: "destructive" });
@@ -165,7 +173,7 @@ export default function StudyRoomsPage() {
     }
   };
 
-  if (authLoading || (isLoadingRooms && user)) { 
+  if (authLoading || (isLoadingRooms && user)) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -173,7 +181,7 @@ export default function StudyRoomsPage() {
     );
   }
 
-  if (!user && !authLoading) { 
+  if (!user && !authLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -205,27 +213,27 @@ export default function StudyRoomsPage() {
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="room-name" className="text-right">Name</Label>
-                    <Input 
-                      id="room-name" 
-                      value={newRoomName} 
-                      onChange={(e) => setNewRoomName(e.target.value)} 
-                      className="col-span-3" 
-                      placeholder="e.g., Quantum Physics Enthusiasts" 
-                      required 
-                      disabled={isCreatingRoom} 
+                    <Input
+                      id="room-name"
+                      value={newRoomName}
+                      onChange={(e) => setNewRoomName(e.target.value)}
+                      className="col-span-3"
+                      placeholder="e.g., Quantum Physics Enthusiasts"
+                      required
+                      disabled={isCreatingRoom}
                       maxLength={MAX_ROOM_NAME_LENGTH}
                     />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="room-topic" className="text-right">Topic</Label>
-                    <Input 
-                      id="room-topic" 
-                      value={newRoomTopic} 
-                      onChange={(e) => setNewRoomTopic(e.target.value)} 
-                      className="col-span-3" 
-                      placeholder="e.g., String Theory" 
-                      required 
-                      disabled={isCreatingRoom} 
+                    <Input
+                      id="room-topic"
+                      value={newRoomTopic}
+                      onChange={(e) => setNewRoomTopic(e.target.value)}
+                      className="col-span-3"
+                      placeholder="e.g., String Theory"
+                      required
+                      disabled={isCreatingRoom}
                       maxLength={MAX_ROOM_TOPIC_LENGTH}
                     />
                   </div>
@@ -242,7 +250,7 @@ export default function StudyRoomsPage() {
           </Dialog>
         }
       />
-      
+
       {studyRooms.length === 0 && !isLoadingRooms ? (
          <Card className="text-center">
           <CardHeader>
@@ -290,4 +298,3 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
-    
