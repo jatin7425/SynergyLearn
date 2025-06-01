@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview Provides AI assistance in a chat context for study rooms.
@@ -9,12 +10,12 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
-export const ChatAssistantInputSchema = z.object({
+const ChatAssistantInputSchema = z.object({
   userQuery: z.string().describe('The query or message from the user directed to the AI assistant.'),
 });
 export type ChatAssistantInput = z.infer<typeof ChatAssistantInputSchema>;
 
-export const ChatAssistantOutputSchema = z.object({
+const ChatAssistantOutputSchema = z.object({
   aiResponse: z.string().describe('The AI-generated response to the user\'s query.'),
 });
 export type ChatAssistantOutput = z.infer<typeof ChatAssistantOutputSchema>;
