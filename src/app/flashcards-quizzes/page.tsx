@@ -3,34 +3,44 @@
 
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, FileQuestion, Eye, Loader2, AlertCircle } from 'lucide-react';
+import { BookOpen, FileQuestion, Eye, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import Image from 'next/image';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, Timestamp, doc, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter, usePathname } from 'next/navigation';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface Flashcard {
-  id: string;
+  // Assuming id is not stored, only question and answer as per generation
   question: string;
   answer: string;
 }
 
-interface QuizItem {
-  id: string;
+interface StoredQuizItem {
   question: string;
-  options: string[]; 
-  correctAnswer: string; 
+  options: string[];
+  correctAnswerIndex: number; // Aligning with AI output and generation page save logic
 }
 interface StudyCollection {
   id: string; // Firestore document ID
   title: string;
   flashcards: Flashcard[];
-  quizzes: QuizItem[];
+  quizzes: StoredQuizItem[];
   sourceNoteId?: string;
   sourceNoteTitle?: string;
   createdAt: Timestamp;
@@ -44,6 +54,7 @@ export default function FlashcardsQuizzesPage() {
 
   const [collections, setCollections] = useState<StudyCollection[]>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(true);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null); // Store ID of collection being deleted
 
   useEffect(() => {
     if (authLoading) return;
@@ -74,7 +85,25 @@ export default function FlashcardsQuizzesPage() {
 
   }, [user, authLoading, toast, router, pathname]);
 
-  if (authLoading || isLoadingCollections) {
+  const handleDeleteCollection = async (collectionId: string, collectionTitle: string) => {
+    if (!user) {
+        toast({ title: "Authentication Error", variant: "destructive"});
+        return;
+    }
+    setIsDeleting(collectionId);
+    try {
+        await deleteDoc(doc(db, 'users', user.uid, 'studyCollections', collectionId));
+        toast({ title: "Collection Deleted", description: `"${collectionTitle}" has been removed.`});
+    } catch (error) {
+        console.error("Error deleting collection: ", error);
+        toast({ title: "Delete Failed", description: (error as Error).message, variant: "destructive"});
+    } finally {
+        setIsDeleting(null);
+    }
+  };
+
+
+  if (authLoading || (isLoadingCollections && user)) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -82,7 +111,7 @@ export default function FlashcardsQuizzesPage() {
     );
   }
 
-  if (!user && !authLoading) { // Fallback if redirect didn't happen
+  if (!user && !authLoading) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -148,17 +177,39 @@ export default function FlashcardsQuizzesPage() {
                   Created on: {collection.createdAt?.toDate().toLocaleDateString() || 'N/A'}
                 </p>
               </CardContent>
-              <CardContent className="border-t pt-4">
-                {/* This link should ideally go to a specific review page for this collection */}
-                {/* For now, linking to the generator page with noteId if available, or generic generator if not */}
-                <Link 
-                  href={collection.sourceNoteId ? `/notes/${collection.sourceNoteId}/generate-flashcards` : `/ai/flashcard-generator?collectionId=${collection.id}`} 
-                  passHref
-                >
+              <CardContent className="border-t pt-4 flex flex-col gap-2">
+                <Link href={`/flashcards-quizzes/${collection.id}`} passHref>
                   <Button className="w-full">
-                    <Eye className="mr-2 h-4 w-4" /> View Collection (Details not implemented)
+                    <Eye className="mr-2 h-4 w-4" /> View Collection
                   </Button>
                 </Link>
+                <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                        <Button variant="outline" className="w-full" disabled={isDeleting === collection.id}>
+                            {isDeleting === collection.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                            Delete
+                        </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This action cannot be undone. This will permanently delete the collection titled "{collection.title}".
+                        </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction 
+                            onClick={() => handleDeleteCollection(collection.id, collection.title)}
+                            className={buttonVariants({ variant: "destructive" })}
+                            disabled={isDeleting === collection.id}
+                        >
+                            {isDeleting === collection.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Delete
+                        </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
               </CardContent>
             </Card>
           ))}
@@ -167,5 +218,3 @@ export default function FlashcardsQuizzesPage() {
     </div>
   );
 }
-
-    
