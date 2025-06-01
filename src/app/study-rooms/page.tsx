@@ -97,11 +97,11 @@ export default function StudyRoomsPage() {
     }
 
     if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
-      toast({ title: "Room Name Too Long", description: `Room name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters.`, variant: "destructive"});
+      toast({ title: "Room Name Too Long", description: `Room name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters. Current: ${trimmedName.length}`, variant: "destructive"});
       return;
     }
     if (trimmedTopic.length > MAX_ROOM_TOPIC_LENGTH) {
-      toast({ title: "Room Topic Too Long", description: `Room topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters.`, variant: "destructive"});
+      toast({ title: "Room Topic Too Long", description: `Room topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters. Current: ${trimmedTopic.length}`, variant: "destructive"});
       return;
     }
 
