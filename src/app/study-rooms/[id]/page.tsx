@@ -205,7 +205,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
-          JSON.stringify(userMessageData, null, 2) // Log the data that failed
+          JSON.stringify(userMessageData, null, 2) 
         );
          toast({
           title: "Error Sending Message: Permissions",
@@ -323,8 +323,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           <TabsTrigger value="chat">Chat</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="whiteboard" className="flex-grow m-0">
-          <Card className="h-full flex flex-col">
+        <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col">
+          <Card className="flex-grow flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
                 <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
                 <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
@@ -339,8 +339,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           </Card>
         </TabsContent>
 
-        <TabsContent value="chat" className="flex-grow m-0 flex flex-col h-full">
-          <Card className="flex flex-col h-full">
+        <TabsContent value="chat" className="flex-grow m-0 flex flex-col">
+          <Card className="flex flex-col flex-grow">
             <CardHeader className="py-3 px-4">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
@@ -406,3 +406,4 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
+
