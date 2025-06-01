@@ -16,7 +16,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 interface Flashcard {
@@ -32,13 +32,22 @@ interface QuizItem {
   correctAnswerIndex: number;
 }
 
-const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<{content: string | null, title: string | null}> => {
-  if (!userId || !noteId) return { content: null, title: null };
+const fetchNoteContentFromFirebase = async (currentUserId: string, noteId: string, ownerUid?: string | null): Promise<{content: string | null, title: string | null}> => {
+  const targetUserId = ownerUid || currentUserId;
+  if (!targetUserId || !noteId) return { content: null, title: null };
   try {
-    const noteDocRef = doc(db, 'users', userId, 'notes', noteId);
+    const noteDocRef = doc(db, 'users', targetUserId, 'notes', noteId);
     const docSnap = await getDoc(noteDocRef);
     if (docSnap.exists()) {
-      return { content: docSnap.data()?.content || null, title: docSnap.data()?.title || null };
+      // For shared notes, we need to ensure the current user has permission via security rules.
+      // The client-side check is illustrative; actual enforcement is by Firestore rules.
+      const data = docSnap.data();
+      if (ownerUid && ownerUid !== currentUserId && !(data?.sharedWith && data.sharedWith[currentUserId] === 'read')) {
+        // This specific check might be redundant if rules prevent fetching unauthorized shared notes,
+        // but good for explicit client-side awareness if needed.
+        // console.warn("Client-side check: Current user might not have read access to this shared note, but fetched anyway. Rules should govern.");
+      }
+      return { content: data?.content || null, title: data?.title || null };
     }
     return { content: null, title: null };
   } catch (error) {
@@ -52,6 +61,9 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
   const resolvedParams = use(props.params);
   const { id: noteId } = resolvedParams || {};
   
+  const searchParams = useSearchParams();
+  const ownerUidFromQuery = searchParams.get('owner');
+
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -78,21 +90,28 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
-      toast({ title: "Authentication Required", description: "Please log in to generate study materials.", variant: "destructive" });
-      router.push(`/login?redirect=${pathname}`);
+      const redirectPath = ownerUidFromQuery 
+        ? `/login?redirect=${pathname}%3Fowner%3D${ownerUidFromQuery}` 
+        : `/login?redirect=${pathname}`;
+      toast({ title: "Authentication Required", description: "Please log in.", variant: "destructive" });
+      router.push(redirectPath);
       return;
     }
 
     if (noteId && user) {
       setIsLoadingNote(true);
-      fetchNoteContentFromFirebase(user.uid, noteId).then(({ content, title }) => {
-        if (content) {
+      // Pass current user's UID for permission checks if it's a shared note
+      fetchNoteContentFromFirebase(user.uid, noteId, ownerUidFromQuery).then(({ content, title }) => {
+        if (content !== null) { // Allow empty string content
           setNoteContent(content);
         } else {
-          toast({ title: "Note content not found", description:"Could not load content for this note.", variant: "destructive" });
+          toast({ title: "Note content not found", description:"Could not load content for this note, or access denied.", variant: "destructive" });
+           router.push('/notes'); // Redirect if note not found or access denied
+           return;
         }
-        setOriginalNoteTitle(title || 'Note ' + noteId);
-        setCollectionTitle(title ? `${title} - Study Set` : 'New Study Set');
+        const baseTitle = title || (ownerUidFromQuery ? 'Shared Note' : 'Note ' + noteId);
+        setOriginalNoteTitle(baseTitle);
+        setCollectionTitle(`${baseTitle} - Study Set`);
         setIsLoadingNote(false);
       });
     } else if (!noteId) { 
@@ -100,11 +119,11 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
         setCollectionTitle('New Study Set');
         setIsLoadingNote(false);
     }
-  }, [noteId, user, authLoading, toast, router, pathname]);
+  }, [noteId, user, authLoading, toast, router, pathname, ownerUidFromQuery]);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
-    if (!noteContent.trim()) {
+    if (!noteContent.trim() && flashcards.length === 0 && quizzes.length === 0 && !noteContent) { // Allow generating from empty string if user explicitly pasted it
       toast({ title: "Note content is empty", description: "Cannot generate from an empty note or text.", variant: "destructive" });
       return;
     }
@@ -136,10 +155,10 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
 
       setCurrentFlashcardIndex(0);
       setShowFlashcardAnswer(false);
-      if (!collectionTitle && originalNoteTitle) {
+      if (!collectionTitle.trim() && originalNoteTitle) {
         setCollectionTitle(`${originalNoteTitle} - Study Set`);
-      } else if (!collectionTitle) {
-        setCollectionTitle('New Study Set ' + new Date().toLocaleTimeString());
+      } else if (!collectionTitle.trim()) {
+        setCollectionTitle('New Study Set ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
       }
       toast({ title: "Generation Complete!", description: "Flashcards and quizzes are ready." });
     } catch (error) {
@@ -185,16 +204,22 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
     setIsSavingCollection(true);
     const quizzesToSave = quizzes.map(({id, ...q}) => q);
 
-    const collectionData = {
+    const collectionData: any = {
         title: collectionTitle.trim(),
         flashcards: flashcards.map(({id, ...f}) => f), 
         quizzes: quizzesToSave,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        ...(noteId && { sourceNoteId: noteId }),
-        ...(noteId && originalNoteTitle && { sourceNoteTitle: originalNoteTitle }),
+        // Important: generatedFrom indicates the source for user's reference,
+        // but the collection itself belongs to the current user.
+        generatedFrom: {
+            noteId: noteId,
+            originalOwnerUid: ownerUidFromQuery || user.uid, // If ownerUidFromQuery is null, it's user's own note
+            noteTitle: originalNoteTitle
+        }
     };
     try {
+        // Collection is always saved to the CURRENT user's space
         const collectionsRef = collection(db, 'users', user.uid, 'studyCollections');
         await addDoc(collectionsRef, collectionData);
         toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved to your collections.`});
@@ -216,12 +241,14 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
   }
 
   if (!user && !authLoading) {
+    const redirectPath = ownerUidFromQuery 
+        ? `/login?redirect=${pathname}%3Fowner%3D${ownerUidFromQuery}` 
+        : `/login?redirect=${pathname}`;
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
             <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
-            <p className="text-muted-foreground mb-4">You need to be logged in to generate study materials.</p>
-            <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
+            <Button onClick={() => router.push(redirectPath)}>Go to Login</Button>
         </div>
     );
   }
@@ -230,10 +257,10 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
     <div className="space-y-6">
       <PageHeader
         title="Generate Flashcards & Quizzes"
-        description={originalNoteTitle ? `From note: ${originalNoteTitle}` : (noteId ? `From note ID: ${noteId}`: 'Generate from any text')}
+        description={originalNoteTitle ? `From: ${originalNoteTitle}${ownerUidFromQuery && ownerUidFromQuery !== user?.uid ? " (Shared Note)" : ""}` : (noteId ? `From note ID: ${noteId}`: 'Generate from any text')}
         actions={
           <>
-            {noteId && <Link href={`/notes/${noteId}`} passHref>
+            {noteId && <Link href={`/notes/${noteId}${ownerUidFromQuery ? `?owner=${ownerUidFromQuery}` : ''}`} passHref>
                 <Button variant="outline" className="mr-2">
                     <FileText className="mr-2 h-4 w-4" /> View Original Note
                 </Button>
@@ -250,7 +277,7 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
       <Card>
         <CardHeader>
           <CardTitle>Source Text</CardTitle>
-          <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes, or paste any text if not starting from a note.</CardDescription>
+          <CardDescription>This content will be used to generate flashcards and quizzes. You can edit it here for generation purposes if needed.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoadingNote && noteId ? ( 
@@ -258,7 +285,7 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
           ) : (
             <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} rows={8} className="bg-muted/50 min-h-[200px]" placeholder="Paste your notes or any text here..."/>
           )}
-          <Button onClick={handleGenerate} disabled={isLoadingAI || (isLoadingNote && !!noteId) || !noteContent.trim()} className="mt-4 w-full">
+          <Button onClick={handleGenerate} disabled={isLoadingAI || (isLoadingNote && !!noteId) || (!noteContent && noteContent !== '')} className="mt-4 w-full">
             {isLoadingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
             {isLoadingAI ? 'Generating...' : 'Generate Flashcards & Quizzes'}
           </Button>
@@ -352,6 +379,7 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
         <Card>
           <CardHeader>
             <CardTitle>Save Collection</CardTitle>
+             <CardDescription>Save this set to your personal "My Collections" area.</CardDescription>
           </CardHeader>
           <CardContent>
             <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
@@ -396,5 +424,3 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
     </div>
   );
 }
-
-    
