@@ -24,7 +24,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore'; // Added Timestamp
+import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 
 interface StudyRoom {
@@ -115,14 +115,14 @@ export default function StudyRoomsPage() {
       uid: user.uid,
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous User',
       avatar: user.photoURL || `https://placehold.co/40x40.png`,
-      joinedAt: Timestamp.now() // Use client-generated timestamp for objects in arrays
+      joinedAt: Timestamp.now() 
     };
 
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 1, // Creator is the first member
-      members: [creatorAsMember], // Add creator to members array
+      memberCount: 1, 
+      members: [creatorAsMember], 
       createdBy: user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -140,13 +140,13 @@ export default function StudyRoomsPage() {
       const firebaseError = error as FirebaseError;
       console.error("Error creating room: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error(`Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}. Data payload:`, JSON.stringify(newRoomData, (key, value) => {
+        console.error(`Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}. Attempted data payload:`, JSON.stringify(newRoomData, (key, value) => {
           if (value && typeof value === 'object') {
             if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-              return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
+              return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
             }
-            if (value && typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('serverTimestamp')) {
-              return `FieldValue.serverTimestamp()`;
+            if (value && typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+              return `FieldValue.${(value as any)._methodName}()`;
             }
           }
           return value;
@@ -290,5 +290,4 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
-
     
