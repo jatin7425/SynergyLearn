@@ -113,7 +113,7 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 0, 
+      memberCount: 0,
       members: [], 
       createdBy: user.uid,
       createdAt: serverTimestamp(),
@@ -131,20 +131,20 @@ export default function StudyRoomsPage() {
       const firebaseError = error as FirebaseError;
       console.error("Error creating room: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error("Firestore 'create' for /studyRooms DENIED. Data payload:", JSON.stringify(newRoomData, (key, value) => {
+        console.error(`Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}. Data payload:`, JSON.stringify(newRoomData, (key, value) => {
           if (value && typeof value === 'object') {
-            if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-              return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
-            }
             if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-              return `FieldValue.${(value as any)._methodName}()`;
+              return `FieldValue.${(value as any)._methodName}()`; // For serverTimestamp
+            }
+            if (value.constructor && value.constructor.name === 'Timestamp') {
+                 return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
             }
           }
           return value;
         }, 2));
         toast({ 
           title: "Creation Failed: Permissions", 
-          description: "Could not create room. Check browser console for data details. Ensure this data meets Firestore security rule conditions (e.g., string lengths, authenticated user).", 
+          description: "Could not create room. Check browser console for data details to use with Firestore Rules Playground. Ensure name/topic lengths are valid and rules are correctly deployed.", 
           variant: "destructive",
           duration: 15000 
         });
@@ -281,5 +281,3 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
-
-    
