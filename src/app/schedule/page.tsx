@@ -6,9 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause } from 'lucide-react';
 import { useState, type FormEvent, useEffect, useCallback } from 'react';
@@ -17,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { generateLearningSchedule, type GenerateLearningScheduleInput, type GenerateLearningScheduleOutput } from '@/ai/flows/generate-learning-schedule';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { format } from 'date-fns';
 
 interface DailyTask {
@@ -43,8 +42,10 @@ interface TimeTrackingState {
   lastClockInTime?: Timestamp | null;
   lastBreakStartTime?: Timestamp | null;
   lastLunchStartTime?: Timestamp | null;
-  currentSessionId?: string | null; // ID of the current study_session in timeTrackingLogs
+  currentSessionId?: string | null;
 }
+
+const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function SchedulePage() {
   const { user, loading: authLoading } = useAuth();
@@ -54,9 +55,15 @@ export default function SchedulePage() {
 
   const [learningGoal, setLearningGoal] = useState('');
   const [scheduleDuration, setScheduleDuration] = useState<'1 month' | '1 year' | '2 years'>('1 month');
-  const [dailyAvailability, setDailyAvailability] = useState('');
-  const [weeklyHolidays, setWeeklyHolidays] = useState('');
-  const [utilizeHolidays, setUtilizeHolidays] = useState(false);
+  
+  const [workingDayStartTime, setWorkingDayStartTime] = useState('');
+  const [workingDayEndTime, setWorkingDayEndTime] = useState('');
+  
+  const [selectedHolidays, setSelectedHolidays] = useState<string[]>([]);
+  const [holidayStartTime, setHolidayStartTime] = useState('');
+  const [holidayEndTime, setHolidayEndTime] = useState('');
+
+  const [utilizeHolidays, setUtilizeHolidays] = useState(false); // Kept this for AI context if holidays are for lighter load or strict off days
 
   const [generatedSchedule, setGeneratedSchedule] = useState<DailyTask[]>([]);
   const [scheduleSummary, setScheduleSummary] = useState<string | null>(null);
@@ -67,6 +74,11 @@ export default function SchedulePage() {
   const [timeTrackingState, setTimeTrackingState] = useState<TimeTrackingState | null>(null);
   const [isLoadingTimeState, setIsLoadingTimeState] = useState(true);
 
+  const handleHolidayChange = (day: string) => {
+    setSelectedHolidays(prev => 
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+    );
+  };
 
   const fetchLearningGoalFromProfile = useCallback(async () => {
     if (!user) return;
@@ -78,7 +90,6 @@ export default function SchedulePage() {
       }
     } catch (error) {
       console.error("Error fetching learning goal: ", error);
-      // Non-critical, user can input manually
     }
   }, [user]);
 
@@ -91,20 +102,23 @@ export default function SchedulePage() {
     }
     fetchLearningGoalFromProfile();
 
-    // Fetch stored schedule
     const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'main');
     const unsubscribeSchedule = onSnapshot(scheduleDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = { id: docSnap.id, ...docSnap.data() } as StoredSchedule;
         setStoredScheduleData(data);
         setGeneratedSchedule(data.schedule);
-        setScheduleSummary(data.parameters.learningGoal); // Or a dedicated summary field if stored
-        // Pre-fill form from stored parameters if user wants to regenerate
+        setScheduleSummary(data.parameters.learningGoal); 
+        
         setLearningGoal(data.parameters.learningGoal);
         setScheduleDuration(data.parameters.scheduleDuration);
-        setDailyAvailability(data.parameters.dailyAvailability);
-        setWeeklyHolidays(data.parameters.weeklyHolidays || '');
+        setWorkingDayStartTime(data.parameters.workingDayStartTime || '');
+        setWorkingDayEndTime(data.parameters.workingDayEndTime || '');
+        setSelectedHolidays(data.parameters.weeklyHolidays || []);
+        setHolidayStartTime(data.parameters.holidayStartTime || '');
+        setHolidayEndTime(data.parameters.holidayEndTime || '');
         setUtilizeHolidays(data.parameters.utilizeHolidays);
+
       } else {
         setStoredScheduleData(null);
         setGeneratedSchedule([]);
@@ -116,13 +130,11 @@ export default function SchedulePage() {
       setIsLoadingStoredSchedule(false);
     });
     
-    // Fetch time tracking state
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
     const unsubscribeTimeState = onSnapshot(timeStateDocRef, (docSnap) => {
         if (docSnap.exists()) {
             setTimeTrackingState(docSnap.data() as TimeTrackingState);
         } else {
-            // Initialize state if not found
             const initialTimeState: TimeTrackingState = { status: 'clocked_out' };
             setDoc(timeStateDocRef, initialTimeState).catch(err => console.error("Error initializing time state", err));
             setTimeTrackingState(initialTimeState);
@@ -134,7 +146,6 @@ export default function SchedulePage() {
         setIsLoadingTimeState(false);
     });
 
-
     return () => {
         unsubscribeSchedule();
         unsubscribeTimeState();
@@ -143,9 +154,13 @@ export default function SchedulePage() {
 
   const handleGenerateSchedule = async (e: FormEvent) => {
     e.preventDefault();
-    if (!learningGoal.trim() || !dailyAvailability.trim()) {
-      toast({ title: "Missing Information", description: "Learning goal and daily availability are required.", variant: "destructive" });
+    if (!learningGoal.trim() || !workingDayStartTime || !workingDayEndTime) {
+      toast({ title: "Missing Information", description: "Learning goal and working day start/end times are required.", variant: "destructive" });
       return;
+    }
+    if (selectedHolidays.length > 0 && (!holidayStartTime || !holidayEndTime)) {
+        toast({ title: "Missing Information", description: "Holiday start/end times are required if holidays are selected.", variant: "destructive"});
+        return;
     }
     if (!user) return;
 
@@ -156,15 +171,20 @@ export default function SchedulePage() {
     try {
       const startDate = format(new Date(), 'yyyy-MM-dd');
       const input: GenerateLearningScheduleInput = {
-        learningGoal, scheduleDuration, dailyAvailability,
-        weeklyHolidays: weeklyHolidays.trim() || undefined, // Send undefined if empty for AI
-        utilizeHolidays, startDate
+        learningGoal, 
+        scheduleDuration, 
+        workingDayStartTime,
+        workingDayEndTime,
+        weeklyHolidays: selectedHolidays,
+        holidayStartTime: selectedHolidays.length > 0 ? holidayStartTime : undefined,
+        holidayEndTime: selectedHolidays.length > 0 ? holidayEndTime : undefined,
+        utilizeHolidays, // This can inform AI if holidays are for "catch-up" or total rest
+        startDate
       };
       const result: GenerateLearningScheduleOutput = await generateLearningSchedule(input);
       setGeneratedSchedule(result.schedule);
       setScheduleSummary(result.summary || `Schedule for: ${learningGoal}`);
 
-      // Save to Firestore
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'main');
       await setDoc(scheduleDocRef, {
         parameters: input,
@@ -196,19 +216,19 @@ export default function SchedulePage() {
   
   const handleClockIn = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_out') return;
-    const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id; // Generate ID upfront
+    const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id; 
     const newLog = {
         sessionId: newSessionId,
         type: 'study_session_start',
         startTime: serverTimestamp(),
         endTime: null,
-        durationMinutes: 0, // Will be calculated on clock out
-        activities: [] // For breaks/lunch within this session
+        durationMinutes: 0,
+        activities: []
     };
     await addDoc(collection(db, 'users', user.uid, 'timeTrackingLogs'), newLog);
     await updateTimeTrackingState({ 
         status: 'clocked_in', 
-        lastClockInTime: serverTimestamp() as Timestamp, // Cast for optimistic update
+        lastClockInTime: serverTimestamp() as Timestamp, 
         currentSessionId: newSessionId 
     });
   };
@@ -219,12 +239,10 @@ export default function SchedulePage() {
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        // Ensure lastClockInTime is a Firestore Timestamp before calculating duration
         const lastClockIn = timeTrackingState.lastClockInTime as Timestamp;
         durationMinutes = Math.round((now.seconds - lastClockIn.seconds) / 60);
     }
 
-    // Update the specific session log
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     await updateDoc(sessionLogRef, {
         endTime: now,
@@ -241,63 +259,38 @@ export default function SchedulePage() {
   const handleStartBreak = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
       
-      const breakActivity = {
-          type: 'break_start',
-          timestamp: serverTimestamp()
-      };
+      const breakActivity = { type: 'break_start', timestamp: serverTimestamp() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, {
-          activities: arrayUnion(breakActivity)
-      });
-      
+      await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
       await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: serverTimestamp() as Timestamp });
   };
 
   const handleEndBreak = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'on_break' || !timeTrackingState.currentSessionId) return;
       
-      const breakEndActivity = {
-          type: 'break_end',
-          timestamp: serverTimestamp()
-      };
+      const breakEndActivity = { type: 'break_end', timestamp: serverTimestamp() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, {
-          activities: arrayUnion(breakEndActivity)
-      });
-      
+      await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
       await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
   };
   
    const handleStartLunch = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
       
-      const lunchActivity = {
-          type: 'lunch_start',
-          timestamp: serverTimestamp()
-      };
+      const lunchActivity = { type: 'lunch_start', timestamp: serverTimestamp() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, {
-          activities: arrayUnion(lunchActivity)
-      });
-
+      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
       await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: serverTimestamp() as Timestamp });
   };
 
   const handleEndLunch = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'on_lunch' || !timeTrackingState.currentSessionId) return;
       
-      const lunchEndActivity = {
-          type: 'lunch_end',
-          timestamp: serverTimestamp()
-      };
-       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, {
-          activities: arrayUnion(lunchEndActivity)
-      });
-
+      const lunchEndActivity = { type: 'lunch_end', timestamp: serverTimestamp() };
+      const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
+      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
       await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
   };
-
 
   if (authLoading || isLoadingStoredSchedule || isLoadingTimeState) {
     return (
@@ -323,7 +316,6 @@ export default function SchedulePage() {
   const canEndBreak = timeTrackingState?.status === 'on_break';
   const canStartLunch = timeTrackingState?.status === 'clocked_in';
   const canEndLunch = timeTrackingState?.status === 'on_lunch';
-
 
   return (
     <div className="space-y-6">
@@ -355,18 +347,48 @@ export default function SchedulePage() {
                   </SelectContent>
                 </Select>
               </div>
+              
               <div>
-                <Label htmlFor="dailyAvailability">Daily Availability</Label>
-                <Input id="dailyAvailability" value={dailyAvailability} onChange={(e) => setDailyAvailability(e.target.value)} placeholder="e.g., Mon-Fri 6 PM - 9 PM, Sat 10 AM - 2 PM or 2 hours daily" required />
+                <Label>Working Day Availability</Label>
+                <div className="flex gap-2">
+                    <Input type="time" id="workingDayStartTime" value={workingDayStartTime} onChange={(e) => setWorkingDayStartTime(e.target.value)} required aria-label="Working day start time"/>
+                    <Input type="time" id="workingDayEndTime" value={workingDayEndTime} onChange={(e) => setWorkingDayEndTime(e.target.value)} required aria-label="Working day end time"/>
+                </div>
               </div>
+
               <div>
-                <Label htmlFor="weeklyHolidays">Weekly Holidays (Optional)</Label>
-                <Input id="weeklyHolidays" value={weeklyHolidays} onChange={(e) => setWeeklyHolidays(e.target.value)} placeholder="e.g., Sunday" />
+                <Label>Weekly Holidays (Select days off)</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
+                    {daysOfWeek.map(day => (
+                        <div key={day} className="flex items-center space-x-2 p-2 border rounded-md">
+                            <Checkbox 
+                                id={`holiday-${day}`} 
+                                checked={selectedHolidays.includes(day)} 
+                                onCheckedChange={() => handleHolidayChange(day)}
+                            />
+                            <Label htmlFor={`holiday-${day}`} className="text-sm font-normal">{day}</Label>
+                        </div>
+                    ))}
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <Switch id="utilizeHolidays" checked={utilizeHolidays} onCheckedChange={setUtilizeHolidays} />
-                <Label htmlFor="utilizeHolidays">Utilize holidays for learning if needed?</Label>
+
+              {selectedHolidays.length > 0 && (
+                <div>
+                    <Label>Holiday Availability (if different)</Label>
+                    <div className="flex gap-2">
+                        <Input type="time" id="holidayStartTime" value={holidayStartTime} onChange={(e) => setHolidayStartTime(e.target.value)} aria-label="Holiday start time"/>
+                        <Input type="time" id="holidayEndTime" value={holidayEndTime} onChange={(e) => setHolidayEndTime(e.target.value)} aria-label="Holiday end time"/>
+                    </div>
+                     <p className="text-xs text-muted-foreground mt-1">Leave blank if holidays are complete rest days and you don't want to utilize them for study.</p>
+                </div>
+              )}
+               <div className="flex items-center space-x-2 pt-2">
+                <Checkbox id="utilizeHolidays" checked={utilizeHolidays} onCheckedChange={(checked) => setUtilizeHolidays(Boolean(checked))} />
+                <Label htmlFor="utilizeHolidays" className="text-sm font-normal">
+                  AI can utilize selected holidays for learning if needed (e.g., for catch-up or ambitious goals).
+                </Label>
               </div>
+
               <Button type="submit" className="w-full" disabled={isLoadingScheduleAI}>
                 {isLoadingScheduleAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
                 {isLoadingScheduleAI ? 'Generating...' : (storedScheduleData ? 'Regenerate Schedule' : 'Generate Schedule')}
@@ -440,3 +462,4 @@ export default function SchedulePage() {
     </div>
   );
 }
+
