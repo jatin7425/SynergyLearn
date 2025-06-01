@@ -1,18 +1,19 @@
 
+
 'use client';
 
 import PageHeader from '@/components/common/page-header';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Added buttonVariants
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Save, Loader2, Share2, AlertCircle, LinkIcon, Trash2, ClipboardCopy, ClipboardCheck } from 'lucide-react'; // Updated icons
+import { BookOpen, Save, Loader2, Share2, AlertCircle, Link as LinkIcon, Trash2, ClipboardCopy, ClipboardCheck } from 'lucide-react'; // Renamed Link to LinkIcon
 import { useState, useEffect, use, type FormEvent, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp, query, where, onSnapshot, deleteDoc } from 'firebase/firestore'; // Added onSnapshot, deleteDoc
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp, query, where, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -34,7 +35,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger, // Added AlertDialogTrigger here
 } from "@/components/ui/alert-dialog";
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 
 interface NoteData {
@@ -44,6 +47,7 @@ interface NoteData {
   updatedAt?: Timestamp;
   ownerUid?: string;
   id?: string;
+  sharedWith?: Record<string, 'read'>; // For direct sharing, user UID -> permission
 }
 
 interface SharedLinkData {
@@ -51,6 +55,14 @@ interface SharedLinkData {
     noteId: string;
     ownerUid: string;
     createdAt: Timestamp;
+}
+
+interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  createdAt: Timestamp;
 }
 
 
@@ -71,11 +83,11 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   const router = useRouter();
   const pathname = usePathname();
 
+  // State for link-based sharing
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [activeShareLinks, setActiveShareLinks] = useState<SharedLinkData[]>([]);
   const [isLoadingLinks, setIsLoadingLinks] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
-
 
   const effectiveOwnerUid = ownerUidFromQuery || user?.uid;
   const isOwner = user?.uid === effectiveOwnerUid;
@@ -86,33 +98,36 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       if (noteIdFromPath === 'new' && !ownerUidFromQuery && user) {
         setTitle('');
         setContent('');
-        setNoteData({ title: '', content: '', ownerUid: user.uid });
+        setNoteData({ title: '', content: '', ownerUid: user.uid, sharedWith: {} });
         setIsLoading(false);
       } else if (noteIdFromPath !== 'new') {
         toast({ title: "Invalid Note", description: "Note ID or owner information is missing.", variant: "destructive" });
-        router.push('/notes');
+        if (user) router.push('/notes'); // Only redirect if user is available, otherwise auth useEffect handles login redirect
       }
       return;
     }
 
     setIsLoading(true);
+    console.log(`[NoteDetail] Fetching note: ${noteIdFromPath} for owner: ${effectiveOwnerUid}`);
     try {
       const noteDocRef = doc(db, 'users', effectiveOwnerUid, 'notes', noteIdFromPath);
       const docSnap = await getDoc(noteDocRef);
       if (docSnap.exists()) {
+        console.log("[NoteDetail] Note document found:", docSnap.data());
         const fetchedData = docSnap.data() as NoteData;
-        const completeNoteData = { ...fetchedData, ownerUid: effectiveOwnerUid, id: docSnap.id };
+        const completeNoteData = { ...fetchedData, ownerUid: effectiveOwnerUid, id: docSnap.id, sharedWith: fetchedData.sharedWith || {} };
         setNoteData(completeNoteData);
         setTitle(completeNoteData.title);
         setContent(completeNoteData.content);
       } else {
+        console.warn("[NoteDetail] Note document not found or no access.");
         toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
-        router.push('/notes');
+        if (user) router.push('/notes');
       }
     } catch (error) {
-      console.error("Error fetching note: ", error);
+      console.error("[NoteDetail] Error fetching note: ", error);
       toast({ title: "Error fetching note", description: (error as Error).message, variant: "destructive" });
-      router.push('/notes');
+      if (user) router.push('/notes');
     } finally {
       setIsLoading(false);
     }
@@ -134,6 +149,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   useEffect(() => {
     if (isOwner && noteIdFromPath && noteIdFromPath !== 'new' && user) {
       setIsLoadingLinks(true);
+      console.log(`[NoteDetail] Fetching share links for note: ${noteIdFromPath}, owner: ${user.uid}`);
       const linksQuery = query(
         collection(db, 'sharedNoteLinks'),
         where('noteId', '==', noteIdFromPath),
@@ -144,16 +160,17 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
         snapshot.forEach((doc) => {
           links.push({ id: doc.id, ...doc.data() } as SharedLinkData);
         });
+        console.log(`[NoteDetail] Found ${links.length} share links.`);
         setActiveShareLinks(links);
         setIsLoadingLinks(false);
       }, (error) => {
-        console.error("Error fetching share links:", error);
+        console.error("[NoteDetail] Error fetching share links:", error);
         toast({ title: "Error", description: "Could not fetch share links.", variant: "destructive" });
         setIsLoadingLinks(false);
       });
       return () => unsubscribe();
     } else {
-      setActiveShareLinks([]); // Clear links if not owner or new note
+      setActiveShareLinks([]); 
     }
   }, [isOwner, noteIdFromPath, user, toast]);
 
@@ -178,6 +195,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       content: content,
       updatedAt: serverTimestamp(),
       ownerUid: user.uid, 
+      sharedWith: noteData?.sharedWith || {}, // Preserve existing sharing info
     };
 
     try {
@@ -199,7 +217,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       setIsSaving(false);
     }
   };
-
+  
   const handleGenerateShareLink = async () => {
     if (!user || !noteIdFromPath || noteIdFromPath === 'new' || !isOwner) {
       toast({ title: "Cannot Generate Link", description: "Note must be saved and you must be the owner.", variant: "destructive" });
@@ -213,8 +231,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
         createdAt: serverTimestamp(),
       };
       const newLinkRef = await addDoc(collection(db, 'sharedNoteLinks'), linkData);
-      toast({ title: "Share Link Generated!", description: `Link ID: ${newLinkRef.id}. Share this ID.` });
-      // The onSnapshot listener for activeShareLinks will update the UI automatically.
+      toast({ title: "Share Link ID Generated!", description: `Link ID: ${newLinkRef.id}. Share this ID.` });
     } catch (error) {
       console.error("Error generating share link:", error);
       toast({ title: "Link Generation Failed", description: (error as Error).message, variant: "destructive" });
@@ -245,8 +262,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     });
   };
 
-
-  if (authLoading || isLoading) {
+  if (authLoading || (user && isLoading && noteIdFromPath !== 'new')) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -277,7 +293,6 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   }
 
   const displayTitleForPage = title || (isSharedView && noteData?.title) || (noteIdFromPath === 'new' ? 'Create New Note' : 'Edit Note');
-  const displayContentForPage = content || (isSharedView && noteData?.content) || '';
 
   return (
     <div className="space-y-6">
@@ -289,10 +304,16 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
         }
         actions={
           <div className="flex flex-col sm:flex-row gap-2">
-            {isOwner && (
+            {isOwner && noteIdFromPath !== 'new' && (
               <Button onClick={handleSaveNote} disabled={isSaving}>
                 {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {isSaving ? 'Saving...' : (noteIdFromPath === 'new' ? 'Save Note' : 'Update Note')}
+                {isSaving ? 'Saving...' : 'Update Note'}
+              </Button>
+            )}
+             {isOwner && noteIdFromPath === 'new' && (
+              <Button onClick={handleSaveNote} disabled={isSaving}>
+                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {isSaving ? 'Saving...' : 'Save Note'}
               </Button>
             )}
             {noteIdFromPath !== 'new' && (
@@ -386,7 +407,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                                                 <AlertDialogFooter>
                                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                     <AlertDialogAction
-                                                        className={cn(Button({variant: "destructive"}))}
+                                                        className={cn(buttonVariants({variant: "destructive"}))}
                                                         onClick={() => handleRevokeShareLink(link.id)}
                                                     >
                                                         Revoke Link
@@ -406,3 +427,4 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     </div>
   );
 }
+
