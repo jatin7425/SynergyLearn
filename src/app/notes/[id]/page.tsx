@@ -6,13 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Save, Loader2, Share2, AlertCircle, UserPlus, Trash2, Eye } from 'lucide-react';
+import { BookOpen, Save, Loader2, Share2, AlertCircle, UserPlus, Trash2, Eye, Search } from 'lucide-react';
 import { useState, useEffect, use, type FormEvent } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, updateDoc,FieldValue } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, updateDoc, query, where, getDocs, limit } from 'firebase/firestore';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import {
   Dialog,
@@ -25,15 +25,28 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { cn } from '@/lib/utils';
 
 interface NoteData {
   title: string;
   content: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-  sharedWith?: { [key: string]: 'read' }; // Map of recipientUID: permissionLevel
-  ownerUid?: string; // Explicit owner UID, useful for shared notes
+  sharedWith?: { [key: string]: 'read' }; 
+  ownerUid?: string;
+  id?: string; // Added id for consistency
 }
+
+interface UserProfile {
+  id: string; // This is the user's UID (document ID in userProfiles)
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string | null;
+}
+
 
 export default function NoteDetailPage(props: { params: { id: string } }) {
   const resolvedParams = use(props.params);
@@ -53,7 +66,10 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   const pathname = usePathname();
 
   const [showShareDialog, setShowShareDialog] = useState(false);
-  const [shareRecipientUid, setShareRecipientUid] = useState('');
+  const [emailSearchQuery, setEmailSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+  const [selectedUserForSharing, setSelectedUserForSharing] = useState<UserProfile | null>(null);
   const [isProcessingShare, setIsProcessingShare] = useState(false);
 
   const effectiveOwnerUid = ownerUidFromQuery || user?.uid;
@@ -73,24 +89,22 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       if (noteIdFromPath !== 'new') {
         toast({ title: "Invalid Note", description: "Note ID or owner information is missing.", variant: "destructive" });
         router.push('/notes');
-      } else if (noteIdFromPath === 'new' && !ownerUidFromQuery) { // Creating a new note, current user is owner
+      } else if (noteIdFromPath === 'new' && !ownerUidFromQuery) { 
         setTitle('');
         setContent('');
         setNoteData({ title: '', content: '', ownerUid: user.uid, sharedWith: {} });
         setIsLoading(false);
-      } else { // 'new' with ownerUidFromQuery - not a valid scenario for creating
+      } else { 
          router.push('/notes');
       }
       return;
     }
     
     if (noteIdFromPath === 'new' && ownerUidFromQuery) {
-        // Cannot create a new note for another owner via this page
         toast({ title: "Invalid Action", description: "Cannot create a new note for another user this way.", variant: "destructive" });
         router.push('/notes');
         return;
     }
-
 
     if (noteIdFromPath && noteIdFromPath !== 'new' && effectiveOwnerUid) {
       setIsLoading(true);
@@ -98,19 +112,16 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       getDoc(noteDocRef).then(docSnap => {
         if (docSnap.exists()) {
           const fetchedData = docSnap.data() as NoteData;
-          // Ensure ownerUid is part of the fetched data if not already
           const completeNoteData = { ...fetchedData, ownerUid: effectiveOwnerUid, id: docSnap.id };
           setNoteData(completeNoteData);
           setTitle(completeNoteData.title);
           setContent(completeNoteData.content);
 
-          // Security check: if it's supposed to be a shared view, verify user has permission
           if (isSharedView && user && !(completeNoteData.sharedWith && completeNoteData.sharedWith[user.uid] === 'read')) {
              toast({ title: "Access Denied", description: "You do not have permission to view this shared note.", variant: "destructive" });
              router.push('/notes');
              return;
           }
-
         } else {
           toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
           router.push('/notes');
@@ -123,7 +134,6 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
         router.push('/notes');
       });
     } else if (noteIdFromPath === 'new' && !ownerUidFromQuery && user) {
-      // Case for creating a new note, current user is owner
       setTitle('');
       setContent('');
       setNoteData({ title: '', content: '', ownerUid: user.uid, sharedWith: {} });
@@ -150,13 +160,13 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       title: title.trim() || "Untitled Note",
       content: content,
       updatedAt: serverTimestamp(),
-      ownerUid: user.uid, // Always set current user as owner on save/create
+      ownerUid: user.uid, 
     };
 
     try {
       if (noteIdFromPath === 'new') {
         noteDataToSave.createdAt = serverTimestamp();
-        noteDataToSave.sharedWith = {}; // Initialize sharedWith for new notes
+        noteDataToSave.sharedWith = {}; 
         const notesCollectionRef = collection(db, 'users', user.uid, 'notes');
         const newNoteRef = await addDoc(notesCollectionRef, noteDataToSave);
         toast({ title: "Note Created!", description: `"${noteDataToSave.title}" has been saved.` });
@@ -174,17 +184,64 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     }
   };
 
+  const searchUsersByEmail = async (searchEmail: string) => {
+    if (!searchEmail.trim() || !user) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearchingUsers(true);
+    try {
+      const usersRef = collection(db, 'userProfiles');
+      const q = query(usersRef,
+        where('email', '>=', searchEmail.toLowerCase()),
+        where('email', '<=', searchEmail.toLowerCase() + '\uf8ff'),
+        limit(5)
+      );
+      const querySnapshot = await getDocs(q);
+      const users: UserProfile[] = [];
+      querySnapshot.forEach((doc) => {
+        if (doc.id !== user.uid) { // Exclude current user from results
+            users.push({ id: doc.id, ...doc.data() } as UserProfile);
+        }
+      });
+      setSearchResults(users);
+    } catch (err) {
+      console.error("Error searching users:", err);
+      setSearchResults([]);
+    } finally {
+      setIsSearchingUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    const debounceTimer = setTimeout(() => {
+      if (emailSearchQuery.length > 2) { // Start searching after 3 characters
+        searchUsersByEmail(emailSearchQuery);
+      } else {
+        setSearchResults([]);
+      }
+    }, 500); // Debounce search
+    return () => clearTimeout(debounceTimer);
+  }, [emailSearchQuery]);
+
+  const handleSelectUserForSharing = (profile: UserProfile) => {
+    setSelectedUserForSharing(profile);
+    setEmailSearchQuery(profile.email); // Fill input with selected user's email
+    setSearchResults([]); // Clear other suggestions
+  };
+
   const handleShareNote = async (e: FormEvent) => {
     e.preventDefault();
     if (!user || !noteIdFromPath || noteIdFromPath === 'new' || !isOwner || !noteData) {
       toast({ title: "Cannot Share", description: "Note must be saved and you must be the owner.", variant: "destructive" });
       return;
     }
-    if (!shareRecipientUid.trim()) {
-      toast({ title: "Recipient UID Required", variant: "destructive" });
+    if (!selectedUserForSharing) {
+      toast({ title: "No Recipient Selected", description: "Please search and select a user to share with.", variant: "destructive" });
       return;
     }
-    if (shareRecipientUid.trim() === user.uid) {
+    const recipientUidToShare = selectedUserForSharing.uid;
+    if (recipientUidToShare === user.uid) {
         toast({ title: "Cannot share with yourself", variant: "destructive" });
         return;
     }
@@ -194,15 +251,15 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     const currentSharedWith = noteData.sharedWith || {};
     const updatedSharedWith = {
       ...currentSharedWith,
-      [shareRecipientUid.trim()]: 'read' as 'read'
+      [recipientUidToShare]: 'read' as 'read'
     };
 
     try {
       await updateDoc(noteDocRef, { sharedWith: updatedSharedWith, updatedAt: serverTimestamp() });
       setNoteData(prev => prev ? { ...prev, sharedWith: updatedSharedWith } : null);
-      toast({ title: "Note Shared!", description: `Successfully shared with UID: ${shareRecipientUid.trim()}` });
-      setShareRecipientUid('');
-      // setShowShareDialog(false); // Keep dialog open to see updated list or share with more
+      toast({ title: "Note Shared!", description: `Successfully shared with ${selectedUserForSharing.displayName} (${selectedUserForSharing.email})` });
+      setSelectedUserForSharing(null);
+      setEmailSearchQuery('');
     } catch (error) {
       console.error("Error sharing note: ", error);
       toast({ title: "Sharing Failed", description: (error as Error).message, variant: "destructive" });
@@ -219,11 +276,13 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     setIsProcessingShare(true);
     const noteDocRef = doc(db, 'users', user.uid, 'notes', noteIdFromPath);
     
-    const {[recipientUidToUnshare]: _, ...remainingSharedWith} = noteData.sharedWith;
+    // Create a new object for sharedWith excluding the recipient
+    const updatedSharedWith = { ...noteData.sharedWith };
+    delete updatedSharedWith[recipientUidToUnshare];
 
     try {
-      await updateDoc(noteDocRef, { sharedWith: remainingSharedWith, updatedAt: serverTimestamp() });
-      setNoteData(prev => prev ? { ...prev, sharedWith: remainingSharedWith } : null);
+      await updateDoc(noteDocRef, { sharedWith: updatedSharedWith, updatedAt: serverTimestamp() });
+      setNoteData(prev => prev ? { ...prev, sharedWith: updatedSharedWith } : null);
       toast({ title: "Unshared Successfully", description: `UID: ${recipientUidToUnshare} removed from shared list.` });
     } catch (error) {
       console.error("Error unsharing note: ", error);
@@ -255,7 +314,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     );
   }
   
-  if (!noteData && noteIdFromPath !== 'new') { // Note data failed to load for an existing note
+  if (!noteData && noteIdFromPath !== 'new') { 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -266,67 +325,113 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     );
   }
 
-
-  const displayTitle = title || (isSharedView && noteData?.title) || (noteIdFromPath === 'new' ? 'Create New Note' : 'Edit Note');
-  const displayContent = content || (isSharedView && noteData?.content) || '';
-
+  const displayTitleForPage = title || (isSharedView && noteData?.title) || (noteIdFromPath === 'new' ? 'Create New Note' : 'Edit Note');
+  const displayContentForPage = content || (isSharedView && noteData?.content) || '';
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={displayTitle}
+        title={displayTitleForPage}
         description={
-          isSharedView ? `Shared by: ${ownerUidFromQuery}. Read-only.` :
+          isSharedView ? `Shared by: ${ownerUidFromQuery || 'Unknown'}. Read-only.` :
           (noteIdFromPath === 'new' ? 'Craft your new note here.' : `Last updated: ${noteData?.updatedAt?.toDate().toLocaleDateString() || 'N/A'}`)
         }
         actions={
           <div className="flex flex-col sm:flex-row gap-2">
             {isOwner && noteIdFromPath !== 'new' && (
-              <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+              <Dialog open={showShareDialog} onOpenChange={(open) => {
+                  setShowShareDialog(open);
+                  if (!open) { // Reset share dialog state on close
+                    setEmailSearchQuery('');
+                    setSearchResults([]);
+                    setSelectedUserForSharing(null);
+                  }
+                }}
+              >
                 <DialogTrigger asChild>
                   <Button variant="outline"><Share2 className="mr-2 h-4 w-4" /> Share</Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-w-md">
                   <DialogHeader>
                     <DialogTitle>Share Note: {noteData?.title}</DialogTitle>
-                    <DialogDescription>Enter the User ID (UID) of the person you want to share this note with (read-only access).</DialogDescription>
+                    <DialogDescription>Enter the email of the user you want to share this note with (read-only access).</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleShareNote} className="space-y-3">
                     <div>
-                      <Label htmlFor="share-uid">Recipient User ID</Label>
-                      <Input 
-                        id="share-uid" 
-                        value={shareRecipientUid} 
-                        onChange={(e) => setShareRecipientUid(e.target.value)}
-                        placeholder="Enter Firebase User ID"
-                        disabled={isProcessingShare}
-                      />
+                      <Label htmlFor="share-email">Recipient Email</Label>
+                      <div className="relative">
+                        <Input 
+                          id="share-email" 
+                          value={emailSearchQuery} 
+                          onChange={(e) => setEmailSearchQuery(e.target.value)}
+                          placeholder="Search user by email..."
+                          disabled={isProcessingShare || !!selectedUserForSharing}
+                          autoComplete="off"
+                        />
+                         {selectedUserForSharing && (
+                            <Button 
+                                type="button" 
+                                variant="ghost" 
+                                size="sm" 
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2"
+                                onClick={() => { setSelectedUserForSharing(null); setEmailSearchQuery(''); }}
+                            >
+                                Clear
+                            </Button>
+                        )}
+                      </div>
+                      {isSearchingUsers && <Loader2 className="h-4 w-4 animate-spin mt-2" />}
+                      {!isSearchingUsers && searchResults.length > 0 && !selectedUserForSharing && (
+                        <ScrollArea className="mt-2 h-[120px] w-full rounded-md border p-2">
+                          {searchResults.map(profile => (
+                            <div 
+                              key={profile.id} 
+                              className="flex items-center p-2 hover:bg-accent rounded-md cursor-pointer"
+                              onClick={() => handleSelectUserForSharing(profile)}
+                            >
+                              <Avatar className="h-7 w-7 mr-2">
+                                <AvatarImage src={profile.photoURL || undefined} alt={profile.displayName} data-ai-hint="user avatar"/>
+                                <AvatarFallback>{profile.displayName.substring(0,1).toUpperCase()}</AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="text-sm font-medium">{profile.displayName}</p>
+                                <p className="text-xs text-muted-foreground">{profile.email}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </ScrollArea>
+                      )}
+                      {!isSearchingUsers && searchResults.length === 0 && emailSearchQuery.length > 2 && !selectedUserForSharing && (
+                        <p className="text-xs text-muted-foreground mt-1">No users found matching "{emailSearchQuery}".</p>
+                      )}
                     </div>
-                    <Button type="submit" className="w-full" disabled={isProcessingShare || !shareRecipientUid.trim()}>
+                    <Button type="submit" className="w-full" disabled={isProcessingShare || !selectedUserForSharing}>
                       {isProcessingShare ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <UserPlus className="mr-2 h-4 w-4"/>}
                        Add Recipient
                     </Button>
                   </form>
                   {noteData?.sharedWith && Object.keys(noteData.sharedWith).length > 0 && (
                     <div className="mt-4 space-y-2">
-                      <h4 className="font-medium">Currently shared with:</h4>
-                      <ul className="max-h-32 overflow-y-auto text-sm space-y-1">
-                        {Object.entries(noteData.sharedWith).map(([uid, permission]) => (
-                          <li key={uid} className="flex justify-between items-center p-1.5 bg-muted/50 rounded">
-                            <span className="truncate" title={uid}>{uid} ({permission})</span>
-                            <Button 
-                               variant="ghost" 
-                               size="sm" 
-                               className="text-destructive hover:text-destructive p-1 h-auto"
-                               onClick={() => handleUnshareNote(uid)}
-                               disabled={isProcessingShare}
-                               title="Unshare"
-                            >
-                               <Trash2 className="h-3.5 w-3.5"/>
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
+                      <h4 className="font-medium text-sm">Currently shared with:</h4>
+                      <ScrollArea className="max-h-32">
+                        <ul className="text-sm space-y-1">
+                          {Object.entries(noteData.sharedWith).map(([uid, permission]) => (
+                            <li key={uid} className="flex justify-between items-center p-1.5 bg-muted/50 rounded hover:bg-muted">
+                              <span className="truncate text-xs" title={uid}>{uid} ({permission})</span>
+                              <Button 
+                                 variant="ghost" 
+                                 size="icon" 
+                                 className="text-destructive hover:text-destructive h-6 w-6"
+                                 onClick={() => handleUnshareNote(uid)}
+                                 disabled={isProcessingShare}
+                                 title="Unshare"
+                              >
+                                 <Trash2 className="h-3.5 w-3.5"/>
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
                     </div>
                   )}
                    <DialogFooter className="mt-3">
@@ -343,7 +448,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
             )}
             {noteIdFromPath !== 'new' && (
              <Link 
-                href={`/notes/${noteIdFromPath}/generate-flashcards${effectiveOwnerUid ? `?owner=${effectiveOwnerUid}` : ''}`} 
+                href={`/notes/${noteIdFromPath}/generate-flashcards${effectiveOwnerUid && effectiveOwnerUid !== user?.uid ? `?owner=${effectiveOwnerUid}` : ''}`} 
                 passHref
              >
                 <Button variant="outline">
@@ -360,9 +465,12 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
           <div>
             <Input
               placeholder="Note Title"
-              value={displayTitle}
+              value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto disabled:bg-transparent disabled:opacity-100 disabled:cursor-default"
+              className={cn(
+                "text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto",
+                (isSaving || !isOwner) && "disabled:bg-transparent disabled:opacity-100 disabled:cursor-default"
+              )}
               disabled={isSaving || !isOwner}
               readOnly={!isOwner}
             />
@@ -370,9 +478,12 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
           <div>
             <Textarea
               placeholder="Start writing your note here... Markdown is supported!"
-              value={displayContent}
+              value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50 disabled:bg-muted/30 disabled:opacity-100 disabled:cursor-default"
+              className={cn(
+                "min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50",
+                (isSaving || !isOwner) && "disabled:bg-muted/30 disabled:opacity-100 disabled:cursor-default"
+              )}
               rows={15}
               disabled={isSaving || !isOwner}
               readOnly={!isOwner}

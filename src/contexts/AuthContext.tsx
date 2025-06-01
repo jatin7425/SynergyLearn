@@ -3,9 +3,10 @@
 
 import type { User, AuthError } from 'firebase/auth';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase'; // Added db
 import { onAuthStateChanged, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import type { SuggestLearningMilestonesInput } from '@/ai/flows/suggest-milestones'; // Keep if needed elsewhere, or remove if not used here
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore'; // Added for user profile creation
+// type SuggestLearningMilestonesInput type is not used in this file directly.
 
 interface AuthContextType {
   user: User | null;
@@ -39,8 +40,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setError(null);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      setUser(userCredential.user);
-      return userCredential.user;
+      if (userCredential.user) {
+        const createdUser = userCredential.user;
+        const userProfileRef = doc(db, 'userProfiles', createdUser.uid);
+        const displayName = createdUser.email ? createdUser.email.split('@')[0] : 'New User';
+        await setDoc(userProfileRef, {
+          uid: createdUser.uid,
+          email: createdUser.email,
+          displayName: displayName,
+          photoURL: createdUser.photoURL || null, // Store photoURL if available
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        setUser(createdUser);
+        return createdUser;
+      }
+      return null;
     } catch (e) {
       setError(e as AuthError);
       return null;
