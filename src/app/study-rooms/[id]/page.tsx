@@ -72,7 +72,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
       avatar: user.photoURL || `https://placehold.co/40x40.png`
     };
-  }, [user?.uid, user?.displayName, user?.email, user?.photoURL]);
+  }, [user]);
 
   useEffect(() => {
     if (authLoading || !roomId) {
@@ -130,7 +130,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     if (chatScrollAreaRef.current) {
       const viewport = chatScrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
       if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
+        const timerId = setTimeout(() => {
+          viewport.scrollTop = viewport.scrollHeight;
+        }, 0);
+        return () => clearTimeout(timerId);
       }
     }
   }, [messages]);
