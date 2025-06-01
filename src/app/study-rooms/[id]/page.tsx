@@ -85,7 +85,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
     if (!currentUserProfile && !authLoading) {
         console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
-        setIsLoadingRoom(false); 
+        setIsLoadingRoom(false);
         if (!user) {
            router.push(`/login?redirect=${pathname}`);
         }
@@ -146,7 +146,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
 
-    // Save the user's message
     const userMessageData = {
       userId: currentUserProfile.uid,
       userName: currentUserProfile.name,
@@ -158,7 +157,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     try {
       await addDoc(messagesColRef, userMessageData);
 
-      // Check for AI trigger: @help_me
       if (trimmedMessage.toLowerCase().startsWith('@help_me')) {
         const aiQuery = trimmedMessage.substring('@help_me'.length).trim();
 
@@ -185,7 +183,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             await addDoc(messagesColRef, aiErrorMessageData);
           }
         } else {
-          // User typed "@help_me" but nothing else
           const helpMessageData = {
               userId: AI_USER_ID,
               userName: AI_USER_NAME,
@@ -205,13 +202,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
-          JSON.stringify(userMessageData, (key, value) => { // Enhanced stringify for Firestore specific types
+          JSON.stringify(userMessageData, (key, value) => { 
             if (value && typeof value === 'object') {
               if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
                 return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
               }
               if (value && typeof value === 'object' && (value as any)._methodName && (value as any)._methodName.includes('timestamp')) {
-                return { _methodName: (value as any)._methodName }; // For serverTimestamp()
+                return { _methodName: (value as any)._methodName }; 
               }
             }
             return value;
@@ -332,9 +329,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           <TabsTrigger value="chat">Chat</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col">
+        <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col overflow-hidden">
           <Card className="flex-grow flex flex-col overflow-hidden">
-            <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+            <CardHeader className="flex flex-row items-center justify-between py-3 px-4 flex-shrink-0">
                 <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
                 <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
             </CardHeader>
@@ -348,9 +345,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           </Card>
         </TabsContent>
 
-        <TabsContent value="chat" className="flex-grow m-0 flex flex-col">
+        <TabsContent value="chat" className="flex-grow m-0 flex flex-col overflow-hidden">
           <Card className="flex flex-col flex-grow overflow-hidden">
-            <CardHeader className="py-3 px-4">
+            <CardHeader className="py-3 px-4 flex-shrink-0">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b min-h-0" ref={chatScrollAreaRef}>
@@ -395,7 +392,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                  {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
               </div>
             </ScrollArea>
-            <CardContent className="pt-2 md:pt-4 pb-2">
+            <CardContent className="pt-2 md:pt-4 pb-2 flex-shrink-0">
               <form onSubmit={handleSendMessage} className="flex gap-2">
                 <Input
                   value={newMessage}
@@ -416,3 +413,5 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   );
 }
 
+    
+    
