@@ -8,18 +8,30 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command } from 'lucide-react';
-import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback, use } from 'react'; // Added use
+import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp, deleteDoc } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
 import { getChatSummary, type ChatSummaryInput } from '@/ai/flows/summarize-chat-flow';
 import { cn } from '@/lib/utils';
 import WhiteboardCanvas, { type WhiteboardPath } from '@/components/study-rooms/WhiteboardCanvas';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Textarea } from '@/components/ui/textarea';
 
 
 interface Member {
@@ -46,6 +58,7 @@ interface Message {
   userAvatar?: string;
   text: string;
   timestamp: Timestamp;
+  updatedAt?: Timestamp; // For edited messages
 }
 
 const AI_USER_ID = 'AI_ASSISTANT';
@@ -134,13 +147,12 @@ function renderMessageWithTags(
 }
 
 
-export default function StudyRoomDetailPage(props: { params: { id:string } }) { // Changed signature
-  const resolvedParams = use(props.params); // Added use(props.params)
-  const { id: roomId } = resolvedParams || {}; // Destructure from resolvedParams
+export default function StudyRoomDetailPage({ params }: { params: { id: string } }) {
+  const { id: roomId } = params;
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = router.pathname; // usePathname is a hook, router.pathname for string
   const { toast } = useToast();
 
   const [roomData, setRoomData] = useState<RoomData | null>(null);
@@ -167,6 +179,10 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
 
   const predefinedColors = ['#000000', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#FFA500'];
   const strokeWidths = [1, 3, 5, 8, 12];
+
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+
 
   const currentUserProfile = useMemo(() => {
     if (!user) return null;
@@ -204,13 +220,16 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
         setRoomData(data);
         setWhiteboardPaths(data.whiteboardDrawing || []);
         
-        const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
-        const hslMatch = cardBg.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
-        if (hslMatch) {
-          setCanvasBgColor(`hsl(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%)`);
-        } else {
-          setCanvasBgColor('white'); 
+        if (typeof window !== 'undefined') {
+          const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
+          const hslMatch = cardBg.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
+          if (hslMatch) {
+            setCanvasBgColor(`hsl(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%)`);
+          } else {
+            setCanvasBgColor('white'); 
+          }
         }
+
 
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
@@ -245,10 +264,10 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
   }, [roomId, authLoading, currentUserProfile, router, pathname, toast, user]); 
 
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (messagesEndRef.current && !editingMessageId) { // Don't auto-scroll if editing
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 100);
     }
-  }, [messages]);
+  }, [messages, editingMessageId]);
 
   const handleNewMessageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const MENTION_TRIGGER = '@';
@@ -575,6 +594,59 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
     }
   };
 
+  const handleStartEdit = (message: Message) => {
+    if (message.userId !== AI_USER_ID) {
+      setEditingMessageId(message.id);
+      setEditText(message.text);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditText('');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingMessageId || !currentUserProfile || !roomId) return;
+    if (editText.trim() === '') {
+      toast({ title: "Cannot save empty message", variant: "destructive" });
+      // Or, treat as delete? For now, just prevent empty save.
+      return;
+    }
+
+    setIsSendingMessage(true); // Reuse for loading state
+    const messageRef = doc(db, 'studyRooms', roomId, 'messages', editingMessageId);
+    try {
+      await updateDoc(messageRef, {
+        text: editText,
+        updatedAt: serverTimestamp()
+      });
+      toast({ title: "Message Updated" });
+      handleCancelEdit();
+    } catch (error) {
+      console.error("Error updating message:", error);
+      toast({ title: "Error Updating Message", description: (error as FirebaseError).message, variant: "destructive" });
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!currentUserProfile || !roomId) return;
+
+    setIsSendingMessage(true); // Reuse for loading state
+    const messageRef = doc(db, 'studyRooms', roomId, 'messages', messageId);
+    try {
+      await deleteDoc(messageRef);
+      toast({ title: "Message Deleted" });
+    } catch (error) {
+      console.error("Error deleting message:", error);
+      toast({ title: "Error Deleting Message", description: (error as FirebaseError).message, variant: "destructive" });
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
 
   const isRoomCreator = roomData?.createdBy === currentUserProfile?.uid;
 
@@ -708,49 +780,105 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-grow min-h-0 relative border-t border-b overflow-y-auto">
-                <div ref={messagesContainerRef} className="p-2 md:p-4 space-y-4">
-                    {messages.map((msg) => {
-                    const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
-                    const isAIMessage = msg.userId === AI_USER_ID;
-                    return (
-                        <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
-                        {!isCurrentUserMessage && (
-                            <Avatar className="h-8 w-8">
-                            <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
-                            <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
-                            </Avatar>
-                        )}
-                        <div className={cn(
-                            "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
-                            isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
-                            : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
-                            : 'bg-card border rounded-bl-none'
-                        )}>
-                            <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                                <span className={cn("text-xs ml-1 font-normal", 
-                                    isCurrentUserMessage ? 'text-primary-foreground/80' 
-                                    : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
-                                    : 'text-muted-foreground/80'
+            <div className="flex-grow min-h-0 relative border-t border-b overflow-y-auto max-h-[calc(85vh-120px)]"> {/* Adjust max-height */}
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto">
+                    <div className="p-2 md:p-4 space-y-1"> {/* Reduced space-y for compactness */}
+                        {messages.map((msg) => {
+                          const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                          const isAIMessage = msg.userId === AI_USER_ID;
+                          const isEditingThisMessage = editingMessageId === msg.id;
+
+                          return (
+                            <div key={msg.id} className={`group relative flex items-end gap-2 py-1 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                              {!isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8 self-start">
+                                  <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                                  <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                                </Avatar>
+                              )}
+                              <div className={cn(
+                                  "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm flex flex-col",
+                                  isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                                  : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                                  : 'bg-card border rounded-bl-none'
+                              )}>
+                                <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                                    <span className={cn("text-xs ml-1 font-normal", 
+                                        isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                        : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                        : 'text-muted-foreground/80'
+                                    )}>
+                                        {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                                        {msg.updatedAt && <span className="text-xs italic ml-1">(edited)</span>}
+                                    </span>
+                                </p>
+                                {isEditingThisMessage ? (
+                                  <div className="mt-1 space-y-2">
+                                    <Textarea 
+                                      value={editText} 
+                                      onChange={(e) => setEditText(e.target.value)} 
+                                      className="text-sm bg-background text-foreground min-h-[60px]"
+                                      rows={2}
+                                    />
+                                    <div className="flex gap-2 justify-end">
+                                      <Button size="sm" onClick={handleSaveEdit} disabled={isSendingMessage}>
+                                        {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin"/> : "Save"}
+                                      </Button>
+                                      <Button size="sm" variant="ghost" onClick={handleCancelEdit} disabled={isSendingMessage}>Cancel</Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm break-words">
+                                    {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
+                                  </p>
+                                )}
+                              </div>
+                              {isCurrentUserMessage && !isEditingThisMessage && msg.userId !== AI_USER_ID && (
+                                <div className={cn(
+                                  "absolute flex gap-0.5 transition-opacity opacity-0 group-hover:opacity-100",
+                                  isCurrentUserMessage ? "left-0 -translate-x-full mr-1" : "right-0 translate-x-full ml-1",
+                                  "top-1/2 -translate-y-1/2" 
                                 )}>
-                                    {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                                </span>
-                            </p>
-                            <p className="text-sm break-words">
-                               {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
-                            </p>
-                        </div>
-                        {isCurrentUserMessage && (
-                            <Avatar className="h-8 w-8">
-                            <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                            <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                            </Avatar>
-                        )}
-                        </div>
-                    );
-                    })}
-                    {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
-                    <div ref={messagesEndRef} />
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={() => handleStartEdit(msg)} title="Edit message">
+                                    <Edit2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" title="Delete message">
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>Delete Message?</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                          This action cannot be undone. Are you sure you want to permanently delete this message?
+                                        </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction
+                                          className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+                                          onClick={() => handleDeleteMessage(msg.id)}>
+                                          Delete
+                                        </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </div>
+                              )}
+                              {isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8 self-start">
+                                  <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                                  <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                                </Avatar>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
+                        <div ref={messagesEndRef} />
+                    </div>
                 </div>
             </div>
 
@@ -804,10 +932,10 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
                   onKeyDown={handleInputKeyDown} 
                   placeholder={`Type message, /command, or @mention...`}
                   className="flex-grow"
-                  disabled={!currentUserProfile || isSendingMessage || isSummarizing}
+                  disabled={!currentUserProfile || isSendingMessage || isSummarizing || !!editingMessageId}
                   autoComplete="off"
                 />
-                <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || isSummarizing || newMessage.trim() === ''}>
+                <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || isSummarizing || newMessage.trim() === '' || !!editingMessageId}>
                   {(isSendingMessage || isSummarizing) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </form>
@@ -818,3 +946,6 @@ export default function StudyRoomDetailPage(props: { params: { id:string } }) { 
     </div>
   );
 }
+
+
+    
