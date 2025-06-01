@@ -31,11 +31,14 @@ interface StudyRoom {
   name: string;
   topic: string;
   memberCount: number; 
-  members: { uid: string; name: string; avatar?: string; joinedAt: Timestamp }[]; // Reflects actual member structure for joining
+  members: { uid: string; name: string; avatar?: string; joinedAt: Timestamp }[];
   createdBy: string; // User UID
   createdAt: Timestamp;
   updatedAt?: Timestamp; 
 }
+
+const MAX_ROOM_NAME_LENGTH = 99;
+const MAX_ROOM_TOPIC_LENGTH = 199;
 
 export default function StudyRoomsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -84,14 +87,28 @@ export default function StudyRoomsPage() {
       toast({ title: "Not Authenticated", variant: "destructive" });
       return;
     }
-    if (!newRoomName.trim() || !newRoomTopic.trim()) {
+
+    const trimmedName = newRoomName.trim();
+    const trimmedTopic = newRoomTopic.trim();
+
+    if (!trimmedName || !trimmedTopic) {
       toast({ title: "Missing Information", description: "Please provide a name and topic for the room.", variant: "destructive"});
       return;
     }
+
+    if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
+      toast({ title: "Room Name Too Long", description: `Room name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters.`, variant: "destructive"});
+      return;
+    }
+    if (trimmedTopic.length > MAX_ROOM_TOPIC_LENGTH) {
+      toast({ title: "Room Topic Too Long", description: `Room topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters.`, variant: "destructive"});
+      return;
+    }
+
     setIsCreatingRoom(true);
     const newRoomData = {
-      name: newRoomName.trim(),
-      topic: newRoomTopic.trim(),
+      name: trimmedName,
+      topic: trimmedTopic,
       memberCount: 0, 
       members: [], 
       createdBy: user.uid,
@@ -154,11 +171,29 @@ export default function StudyRoomsPage() {
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="room-name" className="text-right">Name</Label>
-                    <Input id="room-name" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} className="col-span-3" placeholder="e.g., Quantum Physics Enthusiasts" required disabled={isCreatingRoom} />
+                    <Input 
+                      id="room-name" 
+                      value={newRoomName} 
+                      onChange={(e) => setNewRoomName(e.target.value)} 
+                      className="col-span-3" 
+                      placeholder="e.g., Quantum Physics Enthusiasts" 
+                      required 
+                      disabled={isCreatingRoom} 
+                      maxLength={MAX_ROOM_NAME_LENGTH}
+                    />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="room-topic" className="text-right">Topic</Label>
-                    <Input id="room-topic" value={newRoomTopic} onChange={(e) => setNewRoomTopic(e.target.value)} className="col-span-3" placeholder="e.g., String Theory" required disabled={isCreatingRoom} />
+                    <Input 
+                      id="room-topic" 
+                      value={newRoomTopic} 
+                      onChange={(e) => setNewRoomTopic(e.target.value)} 
+                      className="col-span-3" 
+                      placeholder="e.g., String Theory" 
+                      required 
+                      disabled={isCreatingRoom} 
+                      maxLength={MAX_ROOM_TOPIC_LENGTH}
+                    />
                   </div>
                 </div>
                 <DialogFooter>
