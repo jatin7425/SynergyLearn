@@ -82,7 +82,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             
             const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
             if (!isMember) {
-                const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() }; // Use Timestamp.now()
+                const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() }; 
                 const roomUpdateData = {
                     members: arrayUnion(memberData), 
                     memberCount: (fetchedRoomData.members?.length || 0) + 1,
@@ -94,7 +94,17 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                     const firebaseError = err as FirebaseError;
                     console.error("Error joining room: ", firebaseError);
                     if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-                        console.error("Data for joining room (arrayUnion):", JSON.stringify(memberData, null, 2));
+                        console.error("Firestore 'update' for /studyRooms DENIED. Data payload for joining (arrayUnion):", JSON.stringify(memberData, (key, value) => {
+                           if (value && typeof value === 'object') {
+                                if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                                return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
+                                }
+                                if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                                return `FieldValue.${(value as any)._methodName}()`;
+                                }
+                            }
+                            return value;
+                        }, 2));
                         console.error("Room update for memberCount and updatedAt:", JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
                         toast({ 
                           title: "Error Joining Room: Permissions", 
@@ -171,11 +181,18 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error("Message data attempted for addDoc:", JSON.stringify(messageData, (key, value) => {
-            if (key === 'timestamp') return "FieldValue.serverTimestamp()";
+        console.error("Firestore 'create' for /studyRooms/.../messages DENIED. Message data payload:", JSON.stringify(messageData, (key, value) => {
+           if (value && typeof value === 'object') {
+                if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
+                }
+                if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                return `FieldValue.${(value as any)._methodName}()`;
+                }
+            }
             return value;
         }, 2));
-        console.error("Room update data attempted for updatedAt:", JSON.stringify({ updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
+        console.error("Attempted room update for updatedAt:", JSON.stringify({ updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
          toast({ 
           title: "Error Sending Message: Permissions", 
           description: "Could not send message due to permission issues. Check console for details.", 
@@ -214,7 +231,17 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         const firebaseError = error as FirebaseError;
         console.error("Error leaving room: ", firebaseError);
         if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-            console.error("Data for leaving room (arrayRemove):", JSON.stringify(memberToRemove, null, 2));
+            console.error("Firestore 'update' for /studyRooms DENIED. Data payload for leaving (arrayRemove):", JSON.stringify(memberToRemove, (key, value) => {
+               if (value && typeof value === 'object') {
+                    if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                    return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
+                    }
+                    if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                    return `FieldValue.${(value as any)._methodName}()`;
+                    }
+                }
+                return value;
+            }, 2));
             console.error("Room update for memberCount and updatedAt:", JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: "FieldValue.serverTimestamp()" }, null, 2));
              toast({ 
               title: "Error Leaving Room: Permissions", 
@@ -352,3 +379,5 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
+
+    

@@ -97,7 +97,7 @@ export default function StudyRoomsPage() {
       return;
     }
     if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
-      toast({ title: "Room Name Too Long", description: `Name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters. Current: ${trimmedName.length}`, variant: "destructive"});
+      toast({ title: "Room Name Too Long", description: `Name must be ${MAX_ROOM_NAME_LENGTH} characters or less. Current: ${trimmedName.length}`, variant: "destructive"});
       return;
     }
     if (!trimmedTopic) {
@@ -105,7 +105,7 @@ export default function StudyRoomsPage() {
       return;
     }
     if (trimmedTopic.length > MAX_ROOM_TOPIC_LENGTH) {
-      toast({ title: "Room Topic Too Long", description: `Topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters. Current: ${trimmedTopic.length}`, variant: "destructive"});
+      toast({ title: "Room Topic Too Long", description: `Topic must be ${MAX_ROOM_TOPIC_LENGTH} characters or less. Current: ${trimmedTopic.length}`, variant: "destructive"});
       return;
     }
 
@@ -132,17 +132,19 @@ export default function StudyRoomsPage() {
       console.error("Error creating room: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
         console.error("Firestore 'create' for /studyRooms DENIED. Data payload:", JSON.stringify(newRoomData, (key, value) => {
-          if (value && typeof value === 'object' && value.constructor && value.constructor.name === 'Timestamp') {
-            return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
-          }
-          if (value && typeof value === 'object' && value.toString && value.toString().includes('serverTimestamp')) {
-            return 'FieldValue.serverTimestamp()';
+          if (value && typeof value === 'object') {
+            if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+              return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
+            }
+            if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+              return `FieldValue.${(value as any)._methodName}()`;
+            }
           }
           return value;
         }, 2));
         toast({ 
           title: "Creation Failed: Permissions", 
-          description: "Could not create room due to permission issues. Check browser console for data details to use with Firestore Rules Playground. Ensure input fields meet length requirements if specified in rules.", 
+          description: "Could not create room. Check browser console for data details. Ensure this data meets Firestore security rule conditions (e.g., string lengths, authenticated user).", 
           variant: "destructive",
           duration: 15000 
         });
@@ -221,7 +223,7 @@ export default function StudyRoomsPage() {
                 </div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={isCreatingRoom}>Cancel</Button></DialogClose>
-                  <Button type="submit" disabled={isCreatingRoom}>
+                  <Button type="submit" disabled={isCreatingRoom || !newRoomName.trim() || !newRoomTopic.trim()}>
                     {isCreatingRoom ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Create Room
                   </Button>
@@ -279,3 +281,5 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
+
+    
