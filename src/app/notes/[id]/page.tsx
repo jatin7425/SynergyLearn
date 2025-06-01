@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookOpen, Save, Loader2, Share2, AlertCircle } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react'; // Added 'use'
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,7 +22,11 @@ interface NoteData {
   updatedAt?: Timestamp;
 }
 
-export default function NoteDetailPage({ params }: { params: { id: string } }) {
+// Updated params type to be a Promise
+export default function NoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params); // Resolve the promise
+  const noteId = resolvedParams.id; // Access id from the resolved object
+
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [isLoading, setIsLoading] = useState(true); // For note data loading
@@ -31,7 +35,6 @@ export default function NoteDetailPage({ params }: { params: { id: string } }) {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const noteId = params.id;
 
   useEffect(() => {
     if (authLoading) return; // Wait for auth state
