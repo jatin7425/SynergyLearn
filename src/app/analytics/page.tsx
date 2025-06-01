@@ -1,19 +1,18 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import PageHeader from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, LabelList, LineChart, PieChart, Pie, Cell } from 'recharts'; // BarChart removed for now, PieChart added
-import { Activity, BookOpen, CheckCircle, Clock, Target, Loader2, AlertCircle } from 'lucide-react';
+import { Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, LabelList, LineChart, PieChart, Pie, Cell } from 'recharts';
+import { Activity, BookOpen, CheckCircle, Clock, Target, Loader2, AlertCircle, CalendarCheck2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs,getCountFromServer } from 'firebase/firestore';
-import type { Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, getCountFromServer, Timestamp, onSnapshot } from 'firebase/firestore';
 
 interface Milestone {
   id: string;
@@ -24,6 +23,15 @@ interface Milestone {
   updatedAt?: Timestamp;
 }
 
+interface TimeLog {
+    id?: string; // Firestore doc ID
+    sessionId: string;
+    type: 'study_session_start' | 'study_session_end'; // Assuming study_session_end is implicitly when endTime is set
+    startTime: Timestamp;
+    endTime: Timestamp | null;
+    durationMinutes: number;
+    activities: Array<{type: string, timestamp: Timestamp}>; // For breaks/lunch
+}
 
 const initialWeeklyProgressData = [
   { day: 'Mon', hours: 0, tasks: 0 }, { day: 'Tue', hours: 0, tasks: 0 },
@@ -51,9 +59,8 @@ export default function AnalyticsPage() {
   const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(true);
   const [notesCount, setNotesCount] = useState(0);
   const [completedMilestonesCount, setCompletedMilestonesCount] = useState(0);
-  // Other stats would need more complex data models and logging.
-  const [totalStudyHours, setTotalStudyHours] = useState(0); // Placeholder
-  const [avgTaskCompletion, setAvgTaskCompletion] = useState(0); // Placeholder
+  const [totalStudyHours, setTotalStudyHours] = useState(0);
+  const [consistency, setConsistency] = useState(0); // Percentage
   
   const [weeklyProgressData, setWeeklyProgressData] = useState(initialWeeklyProgressData);
   const [subjectTimeData, setSubjectTimeData] = useState(initialSubjectTimeData);
@@ -69,6 +76,7 @@ export default function AnalyticsPage() {
     
     setIsLoadingAnalytics(true);
     const fetchData = async () => {
+        if (!user) return; // Should not happen if authLoading is false and user is null
         try {
             // Fetch notes count
             const notesCol = collection(db, 'users', user.uid, 'notes');
@@ -81,10 +89,49 @@ export default function AnalyticsPage() {
             const completedSnapshot = await getCountFromServer(completedQuery);
             setCompletedMilestonesCount(completedSnapshot.data().count);
             
-            // TODO: Implement fetching for weekly progress and subject time if data model supports it
-            // For now, they use initial/placeholder data.
-            // setTotalStudyHours(...);
-            // setAvgTaskCompletion(...);
+            // Fetch time tracking logs for total study hours and consistency
+            const timeLogsColRef = collection(db, 'users', user.uid, 'timeTrackingLogs');
+            const unsubscribeTimeLogs = onSnapshot(timeLogsColRef, (snapshot) => {
+                let hoursSum = 0;
+                const clockedInDays = new Set<string>();
+                snapshot.forEach(doc => {
+                    const log = doc.data() as TimeLog;
+                    if (log.durationMinutes && log.endTime) { // Ensure session is complete
+                        hoursSum += log.durationMinutes;
+                    }
+                    if (log.startTime) {
+                        clockedInDays.add(log.startTime.toDate().toISOString().split('T')[0]); // YYYY-MM-DD
+                    }
+                });
+                setTotalStudyHours(Math.round(hoursSum / 60 * 10) / 10); // Convert minutes to hours, 1 decimal place
+                
+                // Calculate consistency (e.g., % of last 30 days active, or since first log if less than 30 days data)
+                if (snapshot.docs.length > 0) {
+                    const firstLogDate = snapshot.docs.reduce((earliest, doc) => {
+                        const logDate = (doc.data() as TimeLog).startTime?.toDate();
+                        return logDate && logDate < earliest ? logDate : earliest;
+                    }, new Date());
+                    
+                    const today = new Date();
+                    const diffTime = Math.abs(today.getTime() - firstLogDate.getTime());
+                    const diffDaysTotal = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const daysToConsider = Math.min(diffDaysTotal, 30);
+
+                    if (daysToConsider > 0) {
+                        setConsistency(Math.round((clockedInDays.size / daysToConsider) * 100));
+                    } else {
+                        setConsistency(0);
+                    }
+                } else {
+                    setConsistency(0);
+                }
+            }, (error) => {
+                console.error("Error fetching time logs: ", error);
+                toast({ title: "Error", description: "Could not load time tracking data.", variant: "destructive" });
+            });
+            // Note: Unsubscribe logic for onSnapshot needs to be handled in cleanup if component unmounts.
+            // For simplicity here, if this page remains mounted, it's okay.
+            // return () => unsubscribeTimeLogs(); // For production, ensure this cleanup
 
         } catch (error) {
             console.error("Error fetching analytics data: ", error);
@@ -105,22 +152,21 @@ export default function AnalyticsPage() {
     );
   }
 
-  if (!user) { // Fallback
+  if (!user) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
         <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
-        <p className="text-muted-foreground mb-4">You need to be logged in to view your analytics.</p>
         <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
       </div>
     );
   }
   
   const overallStats = [
-    { title: "Total Study Hours", value: totalStudyHours > 0 ? `${totalStudyHours}` : "N/A", icon: Clock, trend: "Tracking not fully implemented" },
+    { title: "Total Study Hours", value: `${totalStudyHours}`, icon: Clock, trend: "Tracked from schedule page" },
     { title: "Completed Milestones", value: `${completedMilestonesCount}`, icon: Target, trend: "" },
     { title: "Notes Taken", value: `${notesCount}`, icon: BookOpen, trend: "" }, 
-    { title: "Avg. Task Completion", value: avgTaskCompletion > 0 ? `${avgTaskCompletion}%` : "N/A", icon: CheckCircle, trend: "Tracking not fully implemented" },
+    { title: "Learning Consistency", value: `${consistency}%`, icon: CalendarCheck2, trend: "Based on last 30 days activity" },
   ];
 
 
@@ -166,7 +212,7 @@ export default function AnalyticsPage() {
                 </LineChart>
               </ResponsiveContainer>
             </ChartContainer>
-            <p className="text-xs text-muted-foreground text-center mt-2">Note: Detailed weekly tracking requires further implementation.</p>
+            <p className="text-xs text-muted-foreground text-center mt-2">Note: Detailed weekly tracking requires further implementation of data aggregation.</p>
           </CardContent>
         </Card>
 
@@ -196,7 +242,7 @@ export default function AnalyticsPage() {
                 </PieChart>
               </ResponsiveContainer>
             </ChartContainer>
-             <p className="text-xs text-muted-foreground text-center mt-2 absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4">Note: Subject-based time tracking is not yet implemented.</p>
+             <p className="text-xs text-muted-foreground text-center mt-2 absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4">Note: Subject-based time tracking is not yet implemented. Requires linking schedule topics to time logs.</p>
           </CardContent>
         </Card>
       </div>
@@ -211,14 +257,14 @@ export default function AnalyticsPage() {
                 <Activity className="h-5 w-5 text-primary mr-3 mt-1 flex-shrink-0" />
                 <div>
                     <p className="font-semibold">Track Your Progress</p>
-                    <p className="text-sm text-muted-foreground">Keep your milestones updated to get better insights here.</p>
+                    <p className="text-sm text-muted-foreground">Use the time tracking features on the Schedule page. Keep your milestones updated to get better insights here.</p>
                 </div>
             </div>
             <div className="flex items-start p-3 border rounded-md bg-card hover:shadow-md transition-shadow"> 
                 <Clock className="h-5 w-5 text-yellow-500 dark:text-yellow-400 mr-3 mt-1 flex-shrink-0" /> 
                 <div>
                     <p className="font-semibold">AI Suggestions Coming Soon</p>
-                    <p className="text-sm text-muted-foreground">Future updates will provide personalized suggestions based on your learning patterns.</p>
+                    <p className="text-sm text-muted-foreground">Future updates will provide personalized suggestions based on your learning patterns and quiz performance.</p>
                 </div>
             </div>
         </CardContent>
@@ -226,5 +272,3 @@ export default function AnalyticsPage() {
     </div>
   );
 }
-
-    

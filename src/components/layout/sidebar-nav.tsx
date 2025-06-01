@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -13,7 +14,8 @@ import {
   Sparkles,
   BookOpen,
   HelpCircle,
-  Award
+  Award,
+  CalendarClock, // Added for Schedule
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -29,6 +31,7 @@ const navItems = [
   { href: '/roadmap', label: 'Roadmap', icon: GitFork },
   { href: '/notes', label: 'Notes', icon: FileText },
   { href: '/flashcards-quizzes', label: 'Flashcards & Quizzes', icon: BookOpen },
+  { href: '/schedule', label: 'Schedule', icon: CalendarClock }, // Added Schedule
   { href: '/study-rooms', label: 'Study Rooms', icon: Users },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/gamification', label: 'Rewards', icon: Award },
@@ -37,7 +40,7 @@ const navItems = [
     icon: Sparkles,
     subItems: [
       { href: '/ai/milestone-suggestions', label: 'Milestone Suggestions', icon: Lightbulb },
-      { href: '/ai/flashcard-generator', label: 'Flashcard Generator', icon: HelpCircle }, // Placeholder, main generator is on notes page
+      { href: '/ai/flashcard-generator', label: 'Flashcard Generator', icon: HelpCircle },
     ],
   },
   { href: '/settings', label: 'Settings', icon: Settings },
@@ -57,8 +60,6 @@ export default function SidebarNav() {
                 className={cn(
                   pathname.startsWith(item.href || '___nevermatch___') && 'bg-sidebar-accent text-sidebar-accent-foreground'
                 )}
-                // This button won't navigate, it just opens the submenu
-                // For active state, we can check if any subItem is active
                 isActive={item.subItems.some(sub => pathname === sub.href)}
               >
                 <item.icon />
