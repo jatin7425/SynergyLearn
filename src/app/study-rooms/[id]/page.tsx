@@ -76,69 +76,77 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     setIsLoadingRoom(true);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
-    const unsubscribeRoom = onSnapshot(roomDocRef, async (docSnap) => {
-        if (docSnap.exists()) {
-            const fetchedRoomData = docSnap.data() as RoomData;
+    // Fetch main room data once
+    getDoc(roomDocRef).then(async (docSnap) => {
+      if (docSnap.exists()) {
+        let fetchedRoomData = docSnap.data() as RoomData;
+        const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
 
-            const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
-            if (!isMember) {
-                const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
-                const roomUpdateData = {
-                    members: arrayUnion(memberData),
-                    memberCount: (fetchedRoomData.members?.length || 0) + 1,
-                    updatedAt: serverTimestamp()
-                };
-                try {
-                    await updateDoc(roomDocRef, roomUpdateData);
-                } catch (err) {
-                    const firebaseError = err as FirebaseError;
-                    console.error("Error joining room: ", firebaseError);
-                    if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-                        console.error(
-                          `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${user?.uid || 'N/A'}.` +
-                          `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
-                          `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
-                          `\nAttempted member data (for arrayUnion):`,
-                          JSON.stringify(memberData, (key, value) => {
-                            if (value && typeof value === 'object') {
-                              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
-                              }
-                              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                                return { _methodName: (value as any)._methodName };
-                              }
-                            }
-                            return value;
-                          }, 2)
-                        );
-                        console.error(
-                          `Attempted room update data (memberCount, updatedAt):`,
-                          JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
-                        );
-                        toast({
-                          title: "Error Joining Room: Permissions",
-                          description: "Could not join room due to security rule denial. Check browser console for data details.",
-                          variant: "destructive",
-                          duration: 15000
-                        });
-                    } else {
-                        toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
+        if (!isMember) {
+          const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
+          const roomUpdateData = {
+              members: arrayUnion(memberData),
+              memberCount: (fetchedRoomData.members?.length || 0) + 1,
+              updatedAt: serverTimestamp()
+          };
+          try {
+            await updateDoc(roomDocRef, roomUpdateData);
+            // Manually update client-side state to reflect join immediately
+            fetchedRoomData = {
+                ...fetchedRoomData,
+                members: [...(fetchedRoomData.members || []), memberData],
+                memberCount: (fetchedRoomData.memberCount || 0) + 1,
+            };
+          } catch (err) {
+            const firebaseError = err as FirebaseError;
+            console.error("Error joining room: ", firebaseError);
+            if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
+                console.error(
+                  `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${user?.uid || 'N/A'}.` +
+                  `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
+                  `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+                  `\nAttempted member data (for arrayUnion):`,
+                  JSON.stringify(memberData, (key, value) => {
+                    if (value && typeof value === 'object') {
+                      if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                        return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+                      }
+                      if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+                        return { _methodName: (value as any)._methodName };
+                      }
                     }
-                }
+                    return value;
+                  }, 2)
+                );
+                console.error(
+                  `Attempted room update data (memberCount, updatedAt):`,
+                  JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
+                );
+                toast({
+                  title: "Error Joining Room: Permissions",
+                  description: "Could not join room due to security rule denial. Check browser console for data details.",
+                  variant: "destructive",
+                  duration: 15000
+                });
+            } else {
+                toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
             }
-            setRoomData(fetchedRoomData);
-        } else {
-            toast({ title: "Room Not Found", variant: "destructive" });
-            router.push('/study-rooms');
+          }
         }
-        setIsLoadingRoom(false);
-    }, (error) => {
-        console.error("Error fetching room data: ", error);
-        toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
-        setIsLoadingRoom(false);
+        setRoomData(fetchedRoomData);
+      } else {
+        toast({ title: "Room Not Found", variant: "destructive" });
         router.push('/study-rooms');
+      }
+    }).catch(error => {
+      console.error("Error fetching room data: ", error);
+      toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
+      router.push('/study-rooms');
+    }).finally(() => {
+      setIsLoadingRoom(false);
     });
 
+    // Setup snapshot listener for messages (chat)
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -151,8 +159,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     });
 
     return () => {
-      unsubscribeRoom();
-      unsubscribeMessages();
+      unsubscribeMessages(); // Only messages listener needs cleanup now
     };
   }, [roomId, user, authLoading, router, pathname, toast, currentUserProfile]);
 
@@ -183,6 +190,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
 
+      // Optional: update room's updatedAt. This won't be reflected in current user's roomData state
+      // if roomData is only fetched once.
       const roomDocRef = doc(db, 'studyRooms', roomId);
       await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
 
@@ -228,15 +237,16 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
 
+    // Find the member object based on UID. Firestore needs the exact object to remove from array.
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     if (!memberToRemove) {
-        toast({title: "Error", description: "Cannot leave room, member data not found.", variant: "destructive"});
+        toast({title: "Error", description: "Cannot leave room, current user data not found in room members.", variant: "destructive"});
         return;
     }
-
+    
     const roomUpdateData = {
         members: arrayRemove(memberToRemove),
-        memberCount: (roomData.members?.length || 1) - 1,
+        memberCount: (roomData.memberCount || 1) - 1, // Ensure memberCount doesn't go below 0
         updatedAt: serverTimestamp()
     };
 
@@ -406,3 +416,5 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
+
+      
