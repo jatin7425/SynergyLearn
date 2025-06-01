@@ -36,7 +36,7 @@ interface RoomData {
   updatedAt?: Timestamp;
 }
 interface Message {
-  id: string;
+  id:string;
   userId: string;
   userName: string;
   userAvatar?: string;
@@ -45,17 +45,32 @@ interface Message {
 }
 
 const AI_USER_ID = 'AI_ASSISTANT';
-const AI_USER_NAME = 'AI Helper'; // This is for display, @help_me is the trigger
+const AI_USER_NAME = 'AI Helper'; 
 const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI';
+const AI_MENTION_NAME = 'help_me';
+
+// Suggestion types
+type AISuggestionType = { uid: string; name: string; displayName: string; type: 'ai'; avatar?: string };
+type UserSuggestionType = Member & { type: 'member' };
+type MentionSuggestion = AISuggestionType | UserSuggestionType;
+
+const aiHelpSuggestionItem: AISuggestionType = { 
+  uid: 'ai_special_id', 
+  name: AI_MENTION_NAME, 
+  displayName: `AI Helper (@${AI_MENTION_NAME})`, 
+  type: 'ai',
+  avatar: AI_AVATAR_URL // Can use the AI avatar here or a specific icon
+};
+
 
 function renderMessageWithTags(
   text: string,
   members: Member[] | undefined,
-  aiTrigger: string, // e.g., "help_me"
+  aiTrigger: string, 
   currentUserId?: string
 ): React.ReactNode {
   if (!text) return '';
-  const words = text.split(/(\s+)/); // Split by space, keeping spaces for reconstruction
+  const words = text.split(/(\s+)/); 
 
   return words.map((word, index) => {
     if (word.startsWith('@')) {
@@ -64,7 +79,6 @@ function renderMessageWithTags(
       let actualMentionName = mentionWithPunctuation;
       let punctuation = '';
       
-      // Regex to find common trailing punctuation
       const punctuationRegex = /([!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]+)$/;
       const punctuationMatch = mentionWithPunctuation.match(punctuationRegex);
       
@@ -73,7 +87,6 @@ function renderMessageWithTags(
         punctuation = punctuationMatch[0];
       }
 
-      // Check for AI trigger
       if (actualMentionName.toLowerCase() === aiTrigger.toLowerCase()) {
         return (
           <React.Fragment key={index}>
@@ -85,7 +98,6 @@ function renderMessageWithTags(
         );
       }
 
-      // Check for member mention
       const mentionedMember = members?.find(m => m.name.toLowerCase() === actualMentionName.toLowerCase());
       if (mentionedMember) {
         const isSelfMention = currentUserId && mentionedMember.uid === currentUserId;
@@ -104,7 +116,6 @@ function renderMessageWithTags(
         );
       }
     }
-    // Return the original word (could be a non-matching @word, regular word, or whitespace)
     return word; 
   });
 }
@@ -124,7 +135,15 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionPopupRef = useRef<HTMLDivElement>(null);
+
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
 
 
   const currentUserProfile = useMemo(() => {
@@ -194,14 +213,117 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     }
   }, [messages]);
 
+  const handleNewMessageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const MENTION_TRIGGER = '@';
+    const value = e.target.value;
+    setNewMessage(value);
+  
+    const words = value.split(' ');
+    const lastWord = words[words.length - 1];
+  
+    if (lastWord.startsWith(MENTION_TRIGGER) && lastWord.length > 0) { // Check for @ and some text after it
+      const query = lastWord.substring(1); // Text after @
+  
+      if (query.length > 0 || lastWord === MENTION_TRIGGER) { // Show suggestions if query exists OR if it's just "@"
+        const memberSugs: UserSuggestionType[] = roomData?.members
+          .filter(member => member.name.toLowerCase().includes(query.toLowerCase()) || query === '') // Include all if query is empty (just "@")
+          .map(member => ({ ...member, type: 'member' as const })) || [];
+        
+        let allSugs: MentionSuggestion[] = [];
+        if (aiHelpSuggestionItem.name.toLowerCase().includes(query.toLowerCase()) || query === '') {
+          allSugs.push(aiHelpSuggestionItem);
+        }
+        allSugs = [...allSugs, ...memberSugs];
+        
+        // Simple deduplication by name in case AI name clashes with a user (unlikely for 'help_me')
+        const uniqueSuggestions = Array.from(new Map(allSugs.map(item => [item.name, item])).values());
+
+        if (uniqueSuggestions.length > 0) {
+          setMentionSuggestions(uniqueSuggestions.slice(0, 7)); // Limit suggestions
+          setShowMentionSuggestions(true);
+          setActiveSuggestionIndex(0);
+        } else {
+          setShowMentionSuggestions(false);
+        }
+      } else { // Case where it's just "@" and nothing else, or invalid query
+        setShowMentionSuggestions(false);
+      }
+    } else {
+      setShowMentionSuggestions(false);
+    }
+  };
+  
+  const handleSelectSuggestion = (suggestion: MentionSuggestion) => {
+    const words = newMessage.split(' ');
+    words.pop(); // Remove the current @query word
+  
+    const mentionText = `@${suggestion.name} `; // Add a space after selection
+    setNewMessage(words.join(' ') + (words.length > 0 ? ' ' : '') + mentionText);
+    
+    setShowMentionSuggestions(false);
+    setTimeout(() => inputRef.current?.focus(), 0); // Ensure focus happens after state update
+  };
+  
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showMentionSuggestions && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveSuggestionIndex(prev => (prev + 1) % mentionSuggestions.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveSuggestionIndex(prev => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (mentionSuggestions[activeSuggestionIndex]) {
+          handleSelectSuggestion(mentionSuggestions[activeSuggestionIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowMentionSuggestions(false);
+      }
+    }
+    // Form submission is handled by onSubmit of the form, not directly by Enter here unless suggestions are not shown.
+  };
+
+  useEffect(() => {
+    if (showMentionSuggestions && suggestionPopupRef.current && mentionSuggestions.length > 0) {
+      const activeElement = suggestionPopupRef.current.children[activeSuggestionIndex] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    }
+  }, [activeSuggestionIndex, showMentionSuggestions, mentionSuggestions]);
+  
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (suggestionPopupRef.current && !suggestionPopupRef.current.contains(event.target as Node) &&
+          inputRef.current && !inputRef.current.contains(event.target as Node) ) {
+        setShowMentionSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [suggestionPopupRef, inputRef]);
+
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
+    // If suggestions are shown and Enter was pressed, it should have been handled by handleInputKeyDown to select suggestion.
+    // This means if handleSendMessage is called by form submit, we proceed to send the message.
+    if (showMentionSuggestions && mentionSuggestions.length > 0) {
+        // If user pressed Enter and suggestions were visible, they might have intended to select.
+        // However, if they clicked the send button, we send.
+        // For simplicity, if suggestions are visible and this function is called, assume user confirmed sending the current text.
+    }
+
     if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage || !roomData) return;
 
     const trimmedMessage = newMessage.trim();
     setIsSendingMessage(true);
     setNewMessage(''); 
+    setShowMentionSuggestions(false); // Hide suggestions on send
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
 
@@ -216,8 +338,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     try {
       await addDoc(messagesColRef, userMessageData);
 
-      if (trimmedMessage.toLowerCase().startsWith('@help_me')) {
-        const aiQuery = trimmedMessage.substring('@help_me'.length).trim();
+      if (trimmedMessage.toLowerCase().includes(`@${AI_MENTION_NAME}`)) {
+        // Extract query part for AI. Example: if message is "Hi @help_me what is X?", query is "what is X?"
+        // This is a simple heuristic; more robust parsing might be needed for complex queries.
+        const aiQueryMatch = trimmedMessage.match(new RegExp(`@${AI_MENTION_NAME}\\s*(.*)`, 'i'));
+        const aiQuery = aiQueryMatch && aiQueryMatch[1] ? aiQueryMatch[1].trim() : "User mentioned me.";
+
 
         if (aiQuery) {
           try {
@@ -241,15 +367,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             };
             await addDoc(messagesColRef, aiErrorMessageData);
           }
-        } else {
-          const helpMessageData = {
-              userId: AI_USER_ID,
-              userName: AI_USER_NAME,
-              userAvatar: AI_AVATAR_URL,
-              text: "How can I help you? Please type your question after '@help_me'.",
-              timestamp: serverTimestamp()
-          };
-          await addDoc(messagesColRef, helpMessageData);
         }
       }
     } catch (error) {
@@ -410,60 +527,100 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-1 min-h-0 relative border-t border-b overflow-y-auto"> {/* Scrollable message area */}
-              <div className="p-2 md:p-4 space-y-4"> {/* Inner padding for messages */}
-                {messages.map((msg) => {
-                const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
-                const isAIMessage = msg.userId === AI_USER_ID;
-                return (
-                    <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
-                    {!isCurrentUserMessage && (
-                        <Avatar className="h-8 w-8">
-                        <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
-                        <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
-                        </Avatar>
-                    )}
-                    <div className={cn(
-                        "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
-                        isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
-                        : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
-                        : 'bg-card border rounded-bl-none'
-                    )}>
-                        <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                            <span className={cn("text-xs ml-1 font-normal", 
-                                isCurrentUserMessage ? 'text-primary-foreground/80' 
-                                : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
-                                : 'text-muted-foreground/80'
+            <div className="flex-1 min-h-0 relative border-t border-b"> 
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto">
+                    <div className="p-2 md:p-4 space-y-4">
+                        {messages.map((msg) => {
+                        const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                        const isAIMessage = msg.userId === AI_USER_ID;
+                        return (
+                            <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                            {!isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8">
+                                <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                                <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                                </Avatar>
+                            )}
+                            <div className={cn(
+                                "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
+                                isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                                : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                                : 'bg-card border rounded-bl-none'
                             )}>
-                                {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                            </span>
-                        </p>
-                        <p className="text-sm break-words">
-                           {renderMessageWithTags(msg.text, roomData?.members, "help_me", currentUserProfile?.uid)}
-                        </p>
+                                <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                                    <span className={cn("text-xs ml-1 font-normal", 
+                                        isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                        : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                        : 'text-muted-foreground/80'
+                                    )}>
+                                        {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                                    </span>
+                                </p>
+                                <p className="text-sm break-words">
+                                   {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
+                                </p>
+                            </div>
+                            {isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8">
+                                <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                                <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                                </Avatar>
+                            )}
+                            </div>
+                        );
+                        })}
+                        {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
+                        <div ref={messagesEndRef} />
                     </div>
-                    {isCurrentUserMessage && (
-                        <Avatar className="h-8 w-8">
-                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                        </Avatar>
-                    )}
-                    </div>
-                );
-                })}
-                {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
-                <div ref={messagesEndRef} />
-              </div>
+                </div>
             </div>
 
-            <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t">
+            <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t relative">
               <form onSubmit={handleSendMessage} className="flex gap-2">
+                {showMentionSuggestions && mentionSuggestions.length > 0 && (
+                  <div
+                    ref={suggestionPopupRef}
+                    className="absolute bottom-full left-0 right-0 mb-1 max-h-48 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg z-50"
+                  >
+                    {mentionSuggestions.map((sug, index) => (
+                      <Button
+                        key={sug.uid} 
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "w-full justify-start text-left h-auto py-1.5 px-2 text-sm",
+                          index === activeSuggestionIndex && "bg-accent text-accent-foreground"
+                        )}
+                        onClick={() => handleSelectSuggestion(sug)}
+                        onMouseEnter={() => setActiveSuggestionIndex(index)}
+                        type="button" 
+                      >
+                        {sug.type === 'ai' ? (
+                          <>
+                            <Bot className="mr-2 h-4 w-4 text-accent" /> {sug.displayName}
+                          </>
+                        ) : (
+                          <>
+                            <Avatar className="h-5 w-5 mr-2">
+                              <AvatarImage src={(sug as UserSuggestionType).avatar || 'https://placehold.co/40x40.png'} alt={(sug as UserSuggestionType).name} />
+                              <AvatarFallback>{(sug as UserSuggestionType).name.substring(0,1).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                            {sug.name}
+                          </>
+                        )}
+                      </Button>
+                    ))}
+                  </div>
+                )}
                 <Input
+                  ref={inputRef}
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Type a message, or @help_me for AI..."
+                  onChange={handleNewMessageChange} 
+                  onKeyDown={handleInputKeyDown} 
+                  placeholder={`Type a message, or @${AI_MENTION_NAME} for AI...`}
                   className="flex-grow"
                   disabled={!currentUserProfile || isSendingMessage}
+                  autoComplete="off"
                 />
                 <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || newMessage.trim() === ''}>
                   {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -476,4 +633,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
-
