@@ -117,7 +117,7 @@ export default function StudyRoomsPage() {
       members: [], 
       createdBy: user.uid,
       createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(), 
+      updatedAt: serverTimestamp(),
     };
     try {
       const roomsColRef = collection(db, 'studyRooms');
@@ -131,19 +131,20 @@ export default function StudyRoomsPage() {
       const firebaseError = error as FirebaseError;
       console.error("Error creating room: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error("Data sent during failed room creation attempt:", JSON.stringify(newRoomData, (key, value) => {
-          // Firestore serverTimestamp is an object, stringify it for logging
-          if (value && typeof value === 'object' && value.hasOwnProperty('nanoseconds') && value.hasOwnProperty('seconds')) {
-            return `Timestamp(seconds=${value.seconds}, nanoseconds=${value.nanoseconds})`;
+        console.error("Firestore 'create' for /studyRooms DENIED. Data payload:", JSON.stringify(newRoomData, (key, value) => {
+          if (value && typeof value === 'object' && value.constructor && value.constructor.name === 'Timestamp') {
+            return `Firestore Timestamp (seconds=${(value as Timestamp).seconds}, nanoseconds=${(value as Timestamp).nanoseconds})`;
           }
-          if (key === 'createdAt' || key === 'updatedAt') return "FieldValue.serverTimestamp()"; // Indicate it was a server timestamp
+          if (value && typeof value === 'object' && value.toString && value.toString().includes('serverTimestamp')) {
+            return 'FieldValue.serverTimestamp()';
+          }
           return value;
         }, 2));
         toast({ 
           title: "Creation Failed: Permissions", 
-          description: "Could not create room due to permission issues. Please check browser console for data details to help debug with Firestore Rules Playground. Ensure all input fields meet requirements (e.g., length).", 
+          description: "Could not create room due to permission issues. Check browser console for data details to use with Firestore Rules Playground. Ensure input fields meet length requirements if specified in rules.", 
           variant: "destructive",
-          duration: 10000 
+          duration: 15000 
         });
       } else {
         toast({ title: "Creation Failed", description: firebaseError.message, variant: "destructive" });
