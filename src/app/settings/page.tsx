@@ -9,9 +9,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { User, Bell, Palette, Brain, Lock, Save } from 'lucide-react';
+import { User, Bell, Palette, Brain, Lock, Save, Bot, Loader2 } from 'lucide-react'; // Added Bot, Loader2
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { ensureAIHelperProfileExists } from '@/lib/data-setup'; // Import the new function
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -19,6 +20,7 @@ export default function SettingsPage() {
   const [preferredTopics, setPreferredTopics] = useState('Technology, Science');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
+  const [isProcessingAIProfile, setIsProcessingAIProfile] = useState(false);
 
   const [mounted, setMounted] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark'>('light');
@@ -52,6 +54,24 @@ export default function SettingsPage() {
 
   const handleThemeToggle = (checked: boolean) => {
     setCurrentTheme(checked ? 'dark' : 'light');
+  };
+
+  const handleEnsureAIProfile = async () => {
+    setIsProcessingAIProfile(true);
+    const result = await ensureAIHelperProfileExists();
+    if (result.success) {
+      toast({
+        title: "AI Profile Processed",
+        description: result.message,
+      });
+    } else {
+      toast({
+        title: "AI Profile Error",
+        description: result.message,
+        variant: "destructive",
+      });
+    }
+    setIsProcessingAIProfile(false);
   };
 
   if (!mounted) {
@@ -200,6 +220,22 @@ export default function SettingsPage() {
                     <Button variant="outline" className="w-full" onClick={() => toast({title: "Placeholder", description: "Privacy Policy link would go here."})}>View Privacy Policy</Button>
                     <Button variant="destructive" className="w-full" onClick={() => toast({title: "Feature not implemented", description: "Account deletion is not yet available."})}>Delete Account (Not implemented)</Button>
                 </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center"><Bot className="mr-2 h-5 w-5 text-primary" /> System Data Setup</CardTitle>
+                <CardDescription>Initialize or update system-level data like AI profiles.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={handleEnsureAIProfile} disabled={isProcessingAIProfile} className="w-full">
+                  {isProcessingAIProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
+                  {isProcessingAIProfile ? 'Processing...' : 'Ensure AI Helper Profile'}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">
+                  This will create or update the AI Helper's profile in the 'systemAgents' collection in Firestore. It's safe to click multiple times.
+                </p>
+              </CardContent>
             </Card>
         </div>
       </div>
