@@ -34,6 +34,7 @@ interface StudyRoom {
   // members: string[]; // Array of user UIDs (more complex to maintain count, use memberCount)
   createdBy: string; // User UID
   createdAt: Timestamp;
+  updatedAt?: Timestamp; // Added for consistency
   // active: boolean; // Activity can be inferred from last message or member activity
 }
 
@@ -92,9 +93,11 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: newRoomName.trim(),
       topic: newRoomTopic.trim(),
-      memberCount: 1, // Creator is the first member
+      memberCount: 0, // Initial member count is 0, user joins on first visit
+      members: [], // Initialize with an empty members array
       createdBy: user.uid,
       createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(), // Added updatedAt on create
     };
     try {
       const roomsColRef = collection(db, 'studyRooms');
@@ -112,7 +115,7 @@ export default function StudyRoomsPage() {
     }
   };
 
-  if (authLoading || isLoadingRooms) {
+  if (authLoading || (isLoadingRooms && user)) { // Updated loading condition
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -120,7 +123,7 @@ export default function StudyRoomsPage() {
     );
   }
 
-  if (!user) { // Fallback
+  if (!user && !authLoading) { // Fallback if redirect hasn't happened
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -200,6 +203,9 @@ export default function StudyRoomsPage() {
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
                   Created: {room.createdAt?.toDate().toLocaleDateString() || 'N/A'}
+                </div>
+                 <div className="mt-1 text-xs text-muted-foreground">
+                  Last Active: {room.updatedAt?.toDate().toLocaleString() || room.createdAt?.toDate().toLocaleString() || 'N/A'}
                 </div>
               </CardContent>
               <CardContent className="border-t pt-4 flex justify-between">

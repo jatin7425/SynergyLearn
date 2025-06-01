@@ -20,22 +20,24 @@ interface Member {
   uid: string; 
   name: string; 
   avatar?: string;
-  joinedAt?: Timestamp; // Optional: track when they joined this room
+  joinedAt?: Timestamp; 
 }
 interface RoomData {
   name: string;
   topic: string;
-  members: Member[]; // Array of member objects
+  members: Member[]; 
+  memberCount: number;
   createdBy: string;
   createdAt: Timestamp;
+  updatedAt?: Timestamp;
 }
 interface Message { 
-  id: string; // Firestore doc ID
+  id: string; 
   userId: string; 
   userName: string; 
   userAvatar?: string; 
   text: string; 
-  timestamp: Timestamp | null; // Firestore Server Timestamp
+  timestamp: Timestamp | null; 
 }
 
 export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) { 
@@ -61,7 +63,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     avatar: user.photoURL || `https://placehold.co/40x40.png` 
   } : null;
 
-  // Fetch room data and join user to room
   useEffect(() => {
     if (authLoading || !roomId || !user || !currentUserProfile) {
         if (!authLoading && !user) {
@@ -78,15 +79,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         if (docSnap.exists()) {
             const fetchedRoomData = docSnap.data() as RoomData;
             
-            // Check if current user is a member, if not, add them
             const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
             if (!isMember) {
                 try {
                     await updateDoc(roomDocRef, {
-                        members: arrayUnion({ ...currentUserProfile, joinedAt: serverTimestamp() }),
-                        memberCount: (fetchedRoomData.members?.length || 0) + 1
+                        members: arrayUnion({ ...currentUserProfile, joinedAt: Timestamp.now() }), // Use Timestamp.now() here
+                        memberCount: (fetchedRoomData.members?.length || 0) + 1,
+                        updatedAt: serverTimestamp() // Add updatedAt
                     });
-                    // The listener will pick up the change and update roomData state
                 } catch (err) {
                     console.error("Error joining room: ", err);
                     toast({ title: "Error Joining Room", description: (err as Error).message, variant: "destructive"});
@@ -105,7 +105,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         router.push('/study-rooms');
     });
     
-    // Fetch messages
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -123,7 +122,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     };
   }, [roomId, user, authLoading, router, pathname, toast, currentUserProfile]);
 
-  // Scroll to bottom of chat
   useEffect(() => {
     if (scrollAreaRef.current) {
       const scrollElement = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
@@ -150,6 +148,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
+      // Also update the room's updatedAt timestamp
+      const roomDocRef = doc(db, 'studyRooms', roomId);
+      await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
+
     } catch (error) {
       console.error("Error sending message: ", error);
       toast({ title: "Error Sending Message", variant: "destructive"});
@@ -162,12 +164,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     if (!currentUserProfile || !roomId || !roomData) return;
     try {
         const roomDocRef = doc(db, 'studyRooms', roomId);
-        // Find the specific member object to remove. Firestore needs the exact object.
         const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
         if (memberToRemove) {
             await updateDoc(roomDocRef, {
                 members: arrayRemove(memberToRemove),
-                memberCount: (roomData.members?.length || 1) - 1
+                memberCount: (roomData.members?.length || 1) - 1,
+                updatedAt: serverTimestamp() // Add updatedAt
             });
         }
         toast({ title: "Left Room", description: `You have left ${roomData.name}.`});
@@ -179,7 +181,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   };
 
 
-  if (authLoading || isLoadingRoom) {
+  if (authLoading || (isLoadingRoom && user)) { // Check user as well for isLoadingRoom
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -187,7 +189,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
 
-  if (!user && !authLoading) { // Should be handled by useEffect but as a fallback
+  if (!user && !authLoading) { 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -198,7 +200,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
   
-  if (!roomData) { // Room data failed to load or doesn't exist
+  if (!roomData && !isLoadingRoom) { 
      return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -213,24 +215,24 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   return (
     <div className="flex flex-col h-[calc(100vh-theme(space.16)-1rem)] sm:h-[calc(100vh-theme(space.16)-2rem)]">
       <PageHeader
-        title={roomData.name}
-        description={`Topic: ${roomData.topic}`}
+        title={roomData?.name || 'Loading Room...'}
+        description={roomData ? `Topic: ${roomData.topic}` : 'Fetching details...'}
         actions={
           <div className="flex flex-wrap gap-2 items-center">
             <div className="flex items-center -space-x-2 mr-2">
-              {roomData.members?.slice(0, 3).map(member => (
+              {roomData?.members?.slice(0, 3).map(member => (
                 <Avatar key={member.uid} className="h-8 w-8 border-2 border-background">
                   <AvatarImage src={member.avatar || 'https://placehold.co/40x40.png'} alt={member.name} data-ai-hint="user avatar" />
                   <AvatarFallback>{member.name.substring(0,1).toUpperCase()}</AvatarFallback>
                 </Avatar>
               ))}
-              {(roomData.members?.length || 0) > 3 && (
+              {(roomData?.members?.length || 0) > 3 && (
                 <Avatar className="h-8 w-8 border-2 border-background">
-                   <AvatarFallback>+{(roomData.members?.length || 0) - 3}</AvatarFallback>
+                   <AvatarFallback>+{(roomData?.members?.length || 0) - 3}</AvatarFallback>
                 </Avatar>
               )}
             </div>
-            <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData.members?.length || 0} Members</Button>
+            <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData?.memberCount || 0} Members</Button>
             <Button variant="destructive" size="sm" onClick={handleLeaveRoom}><LogOut className="mr-2 h-4 w-4" /> Leave</Button>
           </div>
         }
