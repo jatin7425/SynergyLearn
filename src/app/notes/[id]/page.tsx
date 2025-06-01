@@ -45,7 +45,7 @@ interface UserProfile {
   email: string;
   displayName: string;
   photoURL?: string | null;
-  createdAt?: Timestamp; // Added for ordering
+  createdAt?: Timestamp; 
 }
 
 
@@ -192,43 +192,48 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     }
     setIsSearchingUsers(true);
     const normalizedSearchTerm = searchTerm.toLowerCase();
-  
+    console.log('[UserSearch] Searching for:', normalizedSearchTerm);
+
     try {
       const usersRef = collection(db, 'userProfiles');
-      // Fetch a pool of users (e.g., latest 100).
-      // For a production app, this might need pagination or a more sophisticated search index.
-      // Ordering by 'createdAt' helps find newer users; adjust if other ordering is better.
-      const q = query(usersRef, orderBy('createdAt', 'desc'), limit(100)); 
+      // Fetch latest 100 users created. For production, a proper search index (e.g., Algolia) is better.
+      const q = query(usersRef, orderBy('createdAt', 'desc'), limit(100));
       
       const querySnapshot = await getDocs(q);
       const candidates: UserProfile[] = [];
       querySnapshot.forEach((doc) => {
-        // Exclude current user from search results
-        if (doc.id !== user.uid) { 
+        if (doc.id !== user.uid) { // Exclude current user
           candidates.push({ id: doc.id, ...doc.data() } as UserProfile);
         }
       });
+      console.log('[UserSearch] Candidates from Firestore:', candidates);
   
-      // Client-side "contains" filtering for email and displayName
       const filteredUsers = candidates.filter(profile =>
         (profile.email && profile.email.toLowerCase().includes(normalizedSearchTerm)) ||
         (profile.displayName && profile.displayName.toLowerCase().includes(normalizedSearchTerm))
-      ).slice(0, 7); // Show top 7 matches from filtered results
+      ).slice(0, 7); // Show top 7 matches
+      console.log('[UserSearch] Filtered users:', filteredUsers);
   
       setSearchResults(filteredUsers);
   
-      if (filteredUsers.length === 0 && candidates.length > 0 && searchTerm.length > 2) {
-          toast({
-              title: "No exact matches in recent users",
-              description: "Try a different search term. Search is performed on recently registered users.",
-              variant: "default"
-          })
+      if (candidates.length === 0 && searchTerm.length > 2) {
+        toast({
+          title: "No User Profiles Queried",
+          description: "The initial search query returned no user profiles from the database. Ensure user profiles exist with a 'createdAt' field.",
+          variant: "default"
+        });
+      } else if (filteredUsers.length === 0 && candidates.length > 0 && searchTerm.length > 2) {
+        toast({
+          title: "No Matches in Recent Users",
+          description: `Searched ${candidates.length} recent user profile(s). Try a different search term, or ensure profiles have matching email/display names.`,
+          variant: "default"
+        });
       }
   
     } catch (err) {
-      console.error("Error searching users:", err);
+      console.error("[UserSearch] Error searching users:", err);
       setSearchResults([]);
-      toast({ title: "Search Error", description: "Could not perform user search.", variant: "destructive"});
+      toast({ title: "User Search Error", description: "Could not perform user search. Check console for details.", variant: "destructive"});
     } finally {
       setIsSearchingUsers(false);
     }
@@ -236,19 +241,19 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
-      if (emailSearchQuery.length > 2) { // Start searching after 2 characters
+      if (emailSearchQuery.length > 2) { 
         searchUsersByEmail(emailSearchQuery);
       } else {
         setSearchResults([]);
       }
-    }, 500); // Debounce search
+    }, 500); 
     return () => clearTimeout(debounceTimer);
-  }, [emailSearchQuery, user]); // Added user to dependency array for searchUsersByEmail
+  }, [emailSearchQuery, user]); 
 
   const handleSelectUserForSharing = (profile: UserProfile) => {
     setSelectedUserForSharing(profile);
-    setEmailSearchQuery(profile.email); // Fill input with selected user's email
-    setSearchResults([]); // Clear other suggestions
+    setEmailSearchQuery(profile.email); 
+    setSearchResults([]); 
   };
 
   const handleShareNote = async (e: FormEvent) => {
@@ -297,14 +302,13 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     setIsProcessingShare(true);
     const noteDocRef = doc(db, 'users', user.uid, 'notes', noteIdFromPath);
     
-    // Create a new object for sharedWith excluding the recipient
     const updatedSharedWith = { ...noteData.sharedWith };
     delete updatedSharedWith[recipientUidToUnshare];
 
     try {
       await updateDoc(noteDocRef, { sharedWith: updatedSharedWith, updatedAt: serverTimestamp() });
       setNoteData(prev => prev ? { ...prev, sharedWith: updatedSharedWith } : null);
-      // Find user displayName for toast
+      
       const unsharedUserProfileRef = doc(db, 'userProfiles', recipientUidToUnshare);
       const unsharedUserSnap = await getDoc(unsharedUserProfileRef);
       const unsharedUserName = unsharedUserSnap.exists() ? unsharedUserSnap.data().displayName : `UID: ${recipientUidToUnshare}`;
@@ -366,7 +370,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
             {isOwner && noteIdFromPath !== 'new' && (
               <Dialog open={showShareDialog} onOpenChange={(open) => {
                   setShowShareDialog(open);
-                  if (!open) { // Reset share dialog state on close
+                  if (!open) { 
                     setEmailSearchQuery('');
                     setSearchResults([]);
                     setSelectedUserForSharing(null);
@@ -405,7 +409,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                             </Button>
                         )}
                       </div>
-                      {isSearchingUsers && <Loader2 className="h-4 w-4 animate-spin mt-2" />}
+                      {isSearchingUsers && <div className="mt-2 flex items-center text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Searching...</div>}
                       {!isSearchingUsers && searchResults.length > 0 && !selectedUserForSharing && (
                         <ScrollArea className="mt-2 h-[120px] w-full rounded-md border p-2">
                           {searchResults.map(profile => (
@@ -427,7 +431,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                         </ScrollArea>
                       )}
                       {!isSearchingUsers && searchResults.length === 0 && emailSearchQuery.length > 2 && !selectedUserForSharing && (
-                        <p className="text-xs text-muted-foreground mt-1">No users found matching "{emailSearchQuery}".</p>
+                        <p className="text-xs text-muted-foreground mt-1">No users found matching "{emailSearchQuery}" in recent profiles.</p>
                       )}
                     </div>
                     <Button type="submit" className="w-full" disabled={isProcessingShare || !selectedUserForSharing}>
@@ -442,7 +446,6 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                         <ul className="text-sm space-y-1">
                           {Object.entries(noteData.sharedWith).map(([uid, permission]) => (
                             <li key={uid} className="flex justify-between items-center p-1.5 bg-muted/50 rounded hover:bg-muted">
-                              {/* Placeholder for fetching user details by UID for display */}
                               <span className="truncate text-xs" title={uid}>User UID: {uid} ({permission})</span>
                               <Button 
                                  variant="ghost" 
@@ -525,3 +528,4 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     </div>
   );
 }
+    
