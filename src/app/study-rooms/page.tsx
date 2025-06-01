@@ -96,7 +96,7 @@ export default function StudyRoomsPage() {
       toast({ title: "Room Name Required", description: "Please enter a name for the room.", variant: "destructive"});
       return;
     }
-     if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
+    if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
       toast({ title: "Room Name Too Long", description: `Name must be ${MAX_ROOM_NAME_LENGTH} characters or less. Current: ${trimmedName.length}`, variant: "destructive"});
       return;
     }
@@ -109,25 +109,18 @@ export default function StudyRoomsPage() {
       return;
     }
 
-
     setIsCreatingRoom(true);
-
-    const creatorAsMember = {
-      uid: user.uid,
-      name: user.displayName || user.email?.split('@')[0] || 'Anonymous User', // Get user's display name or part of email
-      avatar: user.photoURL || `https://placehold.co/40x40.png`, // Get user's photo URL or a placeholder
-      joinedAt: Timestamp.now() // Use client-side Timestamp.now() for initial member
-    };
 
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 1, // Start with creator as 1 member
-      members: [creatorAsMember], // Add creator to members list
+      memberCount: 0, // Initial member count is 0
+      members: [],    // Initialize with an empty members array
       createdBy: user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
+
     try {
       const roomsColRef = collection(db, 'studyRooms');
       const docRef = await addDoc(roomsColRef, newRoomData);
@@ -144,15 +137,12 @@ export default function StudyRoomsPage() {
           `Firestore 'create' for /studyRooms DENIED. Client User UID: ${user?.uid || 'N/A'}.` +
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
-          `\nAttempted data payload:`,
-          JSON.stringify(newRoomData, (key, value) => {
+          `\nAttempted data payload:`, JSON.stringify(newRoomData, (key, value) => {
             if (value && typeof value === 'object') {
-              // For client-generated Firestore Timestamps
               if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
                 return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
               }
-              // For FieldValue.serverTimestamp() sentinels
-              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
+              if (value && typeof value === 'object' && (value as any)._methodName && (value as any)._methodName.includes('timestamp')) {
                 return { _methodName: (value as any)._methodName };
               }
             }
