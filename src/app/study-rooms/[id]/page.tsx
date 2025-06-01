@@ -296,7 +296,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
 
   return (
-    <div className="flex flex-col h-[calc(100vh-theme(space.16)-1rem)] sm:h-[calc(100vh-theme(space.16)-2rem)]">
+    <div className="flex flex-col h-full">
       <PageHeader
         title={roomData?.name || 'Loading Room...'}
         description={roomData ? `Topic: ${roomData.topic}` : 'Fetching details...'}
@@ -412,6 +412,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
-
-    
-    
