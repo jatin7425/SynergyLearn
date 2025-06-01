@@ -125,11 +125,17 @@ export default function SchedulePage() {
             if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
               setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
             }
-            if (activeMainTab === "configure") { // Only switch if currently on configure
-                setActiveMainTab("weeklyDetails");
+             // Only switch to "weeklyDetails" if it's not already the active tab
+            // and if the outline has content. This prevents forcing the tab on initial load
+            // if the user was already on "configure".
+            if (activeMainTab === "configure" && data.weeklyOutline.length > 0) {
+                 setActiveMainTab("weeklyDetails");
             }
         } else {
             setSelectedWeekNumberForDetails(null); // No outline, no selected week
+            if (activeMainTab === "weeklyDetails") { // If on weekly tab but outline is gone, switch back
+                setActiveMainTab("configure");
+            }
         }
 
       } else {
@@ -176,7 +182,7 @@ export default function SchedulePage() {
     if (!user) return;
 
     setIsLoadingWeeklyOutline(true);
-    setSelectedWeekNumberForDetails(null); // Reset selected week
+    setSelectedWeekNumberForDetails(null); 
 
     try {
       const startDateForOutline = format(new Date(), 'yyyy-MM-dd');
@@ -193,7 +199,7 @@ export default function SchedulePage() {
       };
       const result: GenerateWeeklyOutlineOutput = await generateWeeklyOutline(input);
       
-      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary }));
+      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary || '' }));
       
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       const dataToSave = {
@@ -212,12 +218,16 @@ export default function SchedulePage() {
       };
 
       await setDoc(scheduleDocRef, dataToSave, { merge: true });
-      setStoredScheduleData(prev => ({...prev, ...dataToSave, weeklyOutline: outlineWithEmptyTasks, id: 'mainSchedule', createdAt: prev?.createdAt || Timestamp.now()})); // Update local state
-
+      
+      // onSnapshot will update storedScheduleData, so no direct setStoredScheduleData needed here for that.
+      // However, we need to update UI state that depends on the *new* outline immediately.
       if (outlineWithEmptyTasks.length > 0) {
         setSelectedWeekNumberForDetails(outlineWithEmptyTasks[0].weekNumber);
         setActiveMainTab("weeklyDetails");
+      } else {
+        setActiveMainTab("configure");
       }
+
 
       toast({ title: "Weekly Outline Generated!", description: "Your high-level weekly plan is ready." });
     } catch (error) {
@@ -236,7 +246,7 @@ export default function SchedulePage() {
       const input: GenerateDailyTasksInput = {
         periodGoal: week.goalOrTopic,
         periodStartDate: week.startDate,
-        periodDurationDays: 7,
+        periodDurationDays: 7, // Assuming 7 days for a week's detailed plan
         workingDayStartTime: storedScheduleData.workingDayStartTime,
         workingDayEndTime: storedScheduleData.workingDayEndTime,
         weeklyHolidays: storedScheduleData.weeklyHolidays,
@@ -269,7 +279,6 @@ export default function SchedulePage() {
     }
   };
 
-  // --- Time Tracking Functions (unchanged from previous, but ensure they use storedScheduleData if needed) ---
    const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
     if (!user) return;
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
@@ -306,8 +315,9 @@ export default function SchedulePage() {
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        const lastClockIn = timeTrackingState.lastClockInTime as Timestamp; // Cast to Timestamp for arithmetic
-        durationMinutes = Math.round((now.seconds - lastClockIn.seconds) / 60);
+        // Ensure lastClockInTime is treated as a Firestore Timestamp for correct date operations
+        const lastClockInDate = (timeTrackingState.lastClockInTime as Timestamp).toDate();
+        durationMinutes = Math.round((now.toMillis() - lastClockInDate.getTime()) / (1000 * 60));
     }
 
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
@@ -326,16 +336,16 @@ export default function SchedulePage() {
   const handleStartBreak = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
       
-      const breakActivity = { type: 'break_start', timestamp: serverTimestamp() };
+      const breakActivity = { type: 'break_start', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
       await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
-      await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: serverTimestamp() as Timestamp });
+      await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: Timestamp.now() });
   };
 
   const handleEndBreak = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'on_break' || !timeTrackingState.currentSessionId) return;
       
-      const breakEndActivity = { type: 'break_end', timestamp: serverTimestamp() };
+      const breakEndActivity = { type: 'break_end', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
       await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
       await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
@@ -344,16 +354,16 @@ export default function SchedulePage() {
    const handleStartLunch = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
       
-      const lunchActivity = { type: 'lunch_start', timestamp: serverTimestamp() };
+      const lunchActivity = { type: 'lunch_start', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
       await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
-      await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: serverTimestamp() as Timestamp });
+      await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: Timestamp.now() });
   };
 
   const handleEndLunch = async () => {
       if (!user || !timeTrackingState || timeTrackingState.status !== 'on_lunch' || !timeTrackingState.currentSessionId) return;
       
-      const lunchEndActivity = { type: 'lunch_end', timestamp: serverTimestamp() };
+      const lunchEndActivity = { type: 'lunch_end', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
       await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
       await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
