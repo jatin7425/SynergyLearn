@@ -4,10 +4,10 @@
 import PageHeader from '@/components/common/page-header';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PlusCircle, Edit3, Trash2, BookOpen, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, Edit3, Trash2, BookOpen, Loader2, AlertCircle, Link as LinkIcon } from 'lucide-react'; // Added LinkIcon
 import Link from 'next/link';
 import Image from 'next/image';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react'; // Added FormEvent
 import { useRouter, usePathname } from 'next/navigation';
 import {
   AlertDialog,
@@ -23,7 +23,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, query, onSnapshot, doc, deleteDoc, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, deleteDoc, orderBy, Timestamp, getDoc } from 'firebase/firestore'; // Added getDoc
+import { Input } from '@/components/ui/input'; // Added Input
 
 interface Note {
   id: string;
@@ -48,16 +49,18 @@ export default function NotesPage() {
   const { toast } = useToast();
 
   const [notes, setNotes] = useState<Note[]>([]);
-  const [isLoadingNotes, setIsLoadingNotes] = useState(true); // This is for notes data loading
+  const [isLoadingNotes, setIsLoadingNotes] = useState(true);
+  const [sharedLinkIdInput, setSharedLinkIdInput] = useState('');
+  const [isAccessingSharedNote, setIsAccessingSharedNote] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
       toast({ title: "Authentication Required", description: "Please log in to view your notes.", variant: "destructive" });
       router.push(`/login?redirect=${pathname}`);
-      return; // Important to prevent further execution if redirecting
+      return;
     }
 
-    if (user) { // Only attempt to fetch notes if user is authenticated
+    if (user) {
       setIsLoadingNotes(true);
       const notesCollectionRef = collection(db, 'users', user.uid, 'notes');
       const q = query(notesCollectionRef, orderBy('updatedAt', 'desc'));
@@ -77,7 +80,6 @@ export default function NotesPage() {
 
       return () => unsubscribe(); 
     } else if (!authLoading && !user) {
-        // If auth is done, user is null, and we haven't redirected yet (should be rare)
         setNotes([]);
         setIsLoadingNotes(false);
     }
@@ -100,7 +102,41 @@ export default function NotesPage() {
     }
   };
 
-  if (authLoading || (user && isLoadingNotes)) { // Show loader if auth is loading OR if user is present but notes are loading
+  const handleAccessSharedNote = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!sharedLinkIdInput.trim()) {
+        toast({ title: "Link ID Required", description: "Please enter a share link ID.", variant: "default" });
+        return;
+    }
+    if (!user) {
+        toast({ title: "Authentication Required", variant: "destructive" });
+        return;
+    }
+    setIsAccessingSharedNote(true);
+    try {
+        const linkDocRef = doc(db, 'sharedNoteLinks', sharedLinkIdInput.trim());
+        const linkDocSnap = await getDoc(linkDocRef);
+
+        if (linkDocSnap.exists()) {
+            const linkData = linkDocSnap.data();
+            if (linkData.noteId && linkData.ownerUid) {
+                router.push(`/notes/${linkData.noteId}?owner=${linkData.ownerUid}`);
+                setSharedLinkIdInput(''); // Clear input on success
+            } else {
+                toast({ title: "Invalid Link Data", description: "The share link is missing necessary information.", variant: "destructive" });
+            }
+        } else {
+            toast({ title: "Invalid Link ID", description: "The share link ID was not found or is invalid.", variant: "destructive" });
+        }
+    } catch (error) {
+        console.error("Error accessing shared note:", error);
+        toast({ title: "Access Error", description: "Could not access the shared note.", variant: "destructive" });
+    } finally {
+        setIsAccessingSharedNote(false);
+    }
+  };
+
+  if (authLoading || (user && isLoadingNotes)) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -108,7 +144,6 @@ export default function NotesPage() {
     );
   }
   
-  // This case handles when auth is done, user is null, and redirect from useEffect is pending or if direct access without auth
   if (!user && !authLoading) { 
      return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
@@ -120,7 +155,6 @@ export default function NotesPage() {
     );
   }
 
-  // User is authenticated, proceed to render notes or empty state
   return (
     <div className="space-y-6">
       <PageHeader
@@ -135,7 +169,30 @@ export default function NotesPage() {
         }
       />
 
-      {notes.length === 0 ? (
+      <Card>
+        <CardHeader>
+            <CardTitle className="flex items-center"><LinkIcon className="mr-2 h-5 w-5 text-primary" /> Access a Shared Note</CardTitle>
+            <CardDescription>Enter a share link ID provided by another user to view their note.</CardDescription>
+        </CardHeader>
+        <CardContent>
+            <form onSubmit={handleAccessSharedNote} className="flex flex-col sm:flex-row gap-2">
+                <Input
+                    type="text"
+                    placeholder="Enter Share Link ID..."
+                    value={sharedLinkIdInput}
+                    onChange={(e) => setSharedLinkIdInput(e.target.value)}
+                    className="flex-grow"
+                    disabled={isAccessingSharedNote}
+                />
+                <Button type="submit" disabled={isAccessingSharedNote || !sharedLinkIdInput.trim()}>
+                    {isAccessingSharedNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Access Note
+                </Button>
+            </form>
+        </CardContent>
+      </Card>
+
+      {notes.length === 0 && !isLoadingNotes ? ( // Check isLoadingNotes here
         <Card className="text-center">
           <CardHeader>
             <Image src="https://placehold.co/300x200.png" alt="Empty notes illustration" width={300} height={200} className="mx-auto mb-4 rounded-md" data-ai-hint="notebook empty" />
@@ -151,56 +208,65 @@ export default function NotesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {notes.map((note) => (
-            <Card key={note.id} className="flex flex-col">
-              <CardHeader>
-                <CardTitle className="hover:text-primary transition-colors">
-                  <Link href={`/notes/${note.id}`}>{note.title || "Untitled Note"}</Link>
-                </CardTitle>
-                <CardDescription>{note.updatedAt?.toDate().toLocaleDateString() || 'N/A'}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex-grow">
-                <p className="text-sm text-muted-foreground line-clamp-3">{generateExcerpt(note.content)}</p>
-              </CardContent>
-              <CardContent className="border-t pt-4 flex flex-wrap gap-2 justify-between items-center">
-                <Link href={`/notes/${note.id}/generate-flashcards`} passHref>
-                  <Button variant="outline" size="sm">
-                    <BookOpen className="mr-2 h-4 w-4" /> Flashcards/Quiz
-                  </Button>
-                </Link>
-                <div className="flex gap-2">
-                  <Link href={`/notes/${note.id}`} passHref>
-                    <Button variant="ghost" size="icon" aria-label="Edit note">
-                      <Edit3 className="h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete note">
-                        <Trash2 className="h-4 w-4" />
+        <>
+          {isLoadingNotes && notes.length === 0 && ( // Show loader only if notes are still loading and list is empty
+            <div className="flex justify-center items-center py-10">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            </div>
+          )}
+          {!isLoadingNotes && notes.length > 0 && (
+            <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {notes.map((note) => (
+                <Card key={note.id} className="flex flex-col">
+                  <CardHeader>
+                    <CardTitle className="hover:text-primary transition-colors">
+                      <Link href={`/notes/${note.id}`}>{note.title || "Untitled Note"}</Link>
+                    </CardTitle>
+                    <CardDescription>{note.updatedAt?.toDate().toLocaleDateString() || 'N/A'}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-grow">
+                    <p className="text-sm text-muted-foreground line-clamp-3">{generateExcerpt(note.content)}</p>
+                  </CardContent>
+                  <CardContent className="border-t pt-4 flex flex-wrap gap-2 justify-between items-center">
+                    <Link href={`/notes/${note.id}/generate-flashcards`} passHref>
+                      <Button variant="outline" size="sm">
+                        <BookOpen className="mr-2 h-4 w-4" /> Flashcards/Quiz
                       </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This action cannot be undone. This will permanently delete the note titled "{note.title || "Untitled Note"}".
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => handleDeleteNote(note.id, note.title || "Untitled Note")} className={buttonVariants({ variant: "destructive" })}>
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                    </Link>
+                    <div className="flex gap-2">
+                      <Link href={`/notes/${note.id}`} passHref>
+                        <Button variant="ghost" size="icon" aria-label="Edit note">
+                          <Edit3 className="h-4 w-4" />
+                        </Button>
+                      </Link>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete note">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This action cannot be undone. This will permanently delete the note titled "{note.title || "Untitled Note"}".
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDeleteNote(note.id, note.title || "Untitled Note")} className={buttonVariants({ variant: "destructive" })}>
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
