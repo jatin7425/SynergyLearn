@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookOpen, Save, Loader2, Share2, AlertCircle } from 'lucide-react';
-import { useState, useEffect } from 'react'; 
+import { useState, useEffect, use } from 'react'; // Added use
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,8 +22,9 @@ interface NoteData {
   updatedAt?: Timestamp;
 }
 
-export default function NoteDetailPage({ params }: { params: { id: string } }) {
-  const { id: noteId } = params; 
+export default function NoteDetailPage(props: { params: { id: string } }) { // Changed signature
+  const resolvedParams = use(props.params); // Added use(props.params)
+  const { id: noteId } = resolvedParams || {}; // Destructure from resolvedParams
 
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');

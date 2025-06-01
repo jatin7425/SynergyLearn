@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, FileText, Save, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
-import { useState, useEffect, FormEvent } from 'react'; 
+import { useState, useEffect, FormEvent, use } from 'react'; // Added use
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput, type GenerateFlashcardsAndQuizzesOutput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
@@ -26,7 +26,7 @@ interface Flashcard {
 }
 
 interface QuizItem {
-  id: string; // client-side id
+  id: string; 
   question: string;
   options: string[];
   correctAnswerIndex: number;
@@ -48,8 +48,9 @@ const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Pro
 };
 
 
-export default function GenerateFlashcardsPage({ params }: { params: { id: string } }) {
-  const { id: noteId } = params; 
+export default function GenerateFlashcardsPage(props: { params: { id: string } }) { // Changed signature
+  const resolvedParams = use(props.params); // Added use(props.params)
+  const { id: noteId } = resolvedParams || {}; // Destructure from resolvedParams
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -67,8 +68,8 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
   const [showFlashcardAnswer, setShowFlashcardAnswer] = useState(false);
 
-  const [selectedQuizOptions, setSelectedQuizOptions] = useState<Record<string, number>>({}); // quiz.id -> option_index
-  const [revealedQuizAnswers, setRevealedQuizAnswers] = useState<Record<string, boolean>>({}); // quiz.id -> true/false
+  const [selectedQuizOptions, setSelectedQuizOptions] = useState<Record<string, number>>({});
+  const [revealedQuizAnswers, setRevealedQuizAnswers] = useState<Record<string, boolean>>({});
 
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -131,7 +132,7 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
         ...qData,
         id: `q-${Date.now()}-${index}`,
       }));
-      setQuizzes(parsedQuizzes as QuizItem[]); // Cast as AI output should match this structure
+      setQuizzes(parsedQuizzes as QuizItem[]); 
 
       setCurrentFlashcardIndex(0);
       setShowFlashcardAnswer(false);
@@ -182,12 +183,11 @@ export default function GenerateFlashcardsPage({ params }: { params: { id: strin
         return;
     }
     setIsSavingCollection(true);
-    // Map quizzes to only store AI-generated data, not client-side state
     const quizzesToSave = quizzes.map(({id, ...q}) => q);
 
     const collectionData = {
         title: collectionTitle.trim(),
-        flashcards: flashcards.map(({id, ...f}) => f), // Remove client-side ID before saving
+        flashcards: flashcards.map(({id, ...f}) => f), 
         quizzes: quizzesToSave,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

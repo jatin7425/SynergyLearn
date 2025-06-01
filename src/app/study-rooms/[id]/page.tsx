@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command } from 'lucide-react';
-import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback, use } from 'react'; // Added use
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -16,9 +16,9 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
-import { getChatSummary, type ChatSummaryInput } from '@/ai/flows/summarize-chat-flow'; // Added
+import { getChatSummary, type ChatSummaryInput } from '@/ai/flows/summarize-chat-flow';
 import { cn } from '@/lib/utils';
-import WhiteboardCanvas, { type WhiteboardPath } from '@/components/study-rooms/WhiteboardCanvas'; // Import Whiteboard
+import WhiteboardCanvas, { type WhiteboardPath } from '@/components/study-rooms/WhiteboardCanvas';
 import { Separator } from '@/components/ui/separator';
 
 
@@ -37,7 +37,7 @@ interface RoomData {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
-  whiteboardDrawing?: WhiteboardPath[]; // For whiteboard data
+  whiteboardDrawing?: WhiteboardPath[];
 }
 interface Message {
   id:string;
@@ -45,7 +45,7 @@ interface Message {
   userName: string;
   userAvatar?: string;
   text: string;
-  timestamp: Timestamp; // Changed from Timestamp | null for consistency after serverTimestamp resolves
+  timestamp: Timestamp;
 }
 
 const AI_USER_ID = 'AI_ASSISTANT';
@@ -60,7 +60,6 @@ const slashCommands = [
 ];
 
 
-// Suggestion types
 type AISuggestionType = { uid: string; name: string; displayName: string; type: 'ai'; avatar?: string, icon?: React.ElementType };
 type UserSuggestionType = Member & { type: 'member' };
 type CommandSuggestionType = typeof slashCommands[0] & { type: 'command', uid: string };
@@ -135,8 +134,9 @@ function renderMessageWithTags(
 }
 
 
-export default function StudyRoomDetailPage({ params }: { params: { id:string } }) {
-  const { id: roomId } = params;
+export default function StudyRoomDetailPage(props: { params: { id:string } }) { // Changed signature
+  const resolvedParams = use(props.params); // Added use(props.params)
+  const { id: roomId } = resolvedParams || {}; // Destructure from resolvedParams
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -159,14 +159,13 @@ export default function StudyRoomDetailPage({ params }: { params: { id:string } 
   const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
 
-  // Whiteboard state
   const [whiteboardPaths, setWhiteboardPaths] = useState<WhiteboardPath[]>([]);
   const [activeTool, setActiveTool] = useState<'pen' | 'eraser'>('pen');
-  const [activeColor, setActiveColor] = useState('#000000'); // Default black
+  const [activeColor, setActiveColor] = useState('#000000');
   const [activeStrokeWidth, setActiveStrokeWidth] = useState(3);
-  const [canvasBgColor, setCanvasBgColor] = useState('hsl(var(--card))'); // Default to card background for eraser
+  const [canvasBgColor, setCanvasBgColor] = useState('hsl(var(--card))');
 
-  const predefinedColors = ['#000000', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#FFA500']; // Black, Red, Blue, Green, Yellow, Orange
+  const predefinedColors = ['#000000', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#FFA500'];
   const strokeWidths = [1, 3, 5, 8, 12];
 
   const currentUserProfile = useMemo(() => {
@@ -380,7 +379,6 @@ export default function StudyRoomDetailPage({ params }: { params: { id:string } 
     
     let isCommandProcessed = false;
 
-    // Check for /summarize command
     if (trimmedMessage.toLowerCase() === '/summarize') {
       isCommandProcessed = true;
       setIsSummarizing(true);
@@ -409,10 +407,9 @@ export default function StudyRoomDetailPage({ params }: { params: { id:string } 
         await addDoc(messagesColRef, aiErrorMessageData).catch(e => console.error("Error posting summary error msg:", e));
       } finally {
         setIsSummarizing(false);
-        setIsSendingMessage(false); // Ensure this is reset
+        setIsSendingMessage(false);
       }
     }
-    // Check for /suggestion or /ask command
     else if (trimmedMessage.toLowerCase().startsWith('/suggestion ') || trimmedMessage.toLowerCase().startsWith('/ask ')) {
       isCommandProcessed = true;
       const command = trimmedMessage.toLowerCase().startsWith('/suggestion') ? '/suggestion' : '/ask';
@@ -446,12 +443,11 @@ export default function StudyRoomDetailPage({ params }: { params: { id:string } 
         };
         await addDoc(messagesColRef, emptyQueryMessage);
       }
-       setIsSendingMessage(false); // Ensure this is reset
+       setIsSendingMessage(false);
     }
 
     if (isCommandProcessed) return; 
 
-    // Regular message sending
     const userMessageData = {
       userId: currentUserProfile.uid,
       userName: currentUserProfile.name,
@@ -822,4 +818,3 @@ export default function StudyRoomDetailPage({ params }: { params: { id:string } 
     </div>
   );
 }
-
