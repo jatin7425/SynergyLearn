@@ -1,19 +1,18 @@
 
-
 'use client';
 
 import PageHeader from '@/components/common/page-header';
-import { Button, buttonVariants } from '@/components/ui/button'; // Added buttonVariants
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Save, Loader2, Share2, AlertCircle, Link as LinkIcon, Trash2, ClipboardCopy, ClipboardCheck } from 'lucide-react'; // Renamed Link to LinkIcon
+import { BookOpen, Save, Loader2, Share2, AlertCircle, Link as LinkIcon, Trash2, ClipboardCopy, ClipboardCheck, Eye, Edit } from 'lucide-react';
 import { useState, useEffect, use, type FormEvent, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp, query, where, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp, query, where, onSnapshot, deleteDoc, orderBy } from 'firebase/firestore';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -35,9 +34,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger, // Added AlertDialogTrigger here
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import ReactMarkdown from 'react-markdown';
 
 
 interface NoteData {
@@ -47,11 +47,11 @@ interface NoteData {
   updatedAt?: Timestamp;
   ownerUid?: string;
   id?: string;
-  sharedWith?: Record<string, 'read'>; // For direct sharing, user UID -> permission
+  sharedWith?: Record<string, 'read'>;
 }
 
 interface SharedLinkData {
-    id: string; // Document ID of the link itself
+    id: string;
     noteId: string;
     ownerUid: string;
     createdAt: Timestamp;
@@ -83,44 +83,45 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // State for link-based sharing
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [activeShareLinks, setActiveShareLinks] = useState<SharedLinkData[]>([]);
   const [isLoadingLinks, setIsLoadingLinks] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+
+  const [isEditMode, setIsEditMode] = useState(true);
+
 
   const effectiveOwnerUid = ownerUidFromQuery || user?.uid;
   const isOwner = user?.uid === effectiveOwnerUid;
   const isSharedView = !isOwner && !!ownerUidFromQuery;
 
   const fetchNoteDetails = useCallback(async () => {
-    if (!noteIdFromPath || noteIdFromPath === 'new' || !effectiveOwnerUid) {
+    if (!noteIdFromPath || !effectiveOwnerUid) {
       if (noteIdFromPath === 'new' && !ownerUidFromQuery && user) {
         setTitle('');
         setContent('');
         setNoteData({ title: '', content: '', ownerUid: user.uid, sharedWith: {} });
+        setIsEditMode(true); // New notes start in edit mode
         setIsLoading(false);
       } else if (noteIdFromPath !== 'new') {
         toast({ title: "Invalid Note", description: "Note ID or owner information is missing.", variant: "destructive" });
-        if (user) router.push('/notes'); // Only redirect if user is available, otherwise auth useEffect handles login redirect
+        if (user) router.push('/notes');
       }
       return;
     }
 
     setIsLoading(true);
-    console.log(`[NoteDetail] Fetching note: ${noteIdFromPath} for owner: ${effectiveOwnerUid}`);
     try {
       const noteDocRef = doc(db, 'users', effectiveOwnerUid, 'notes', noteIdFromPath);
       const docSnap = await getDoc(noteDocRef);
       if (docSnap.exists()) {
-        console.log("[NoteDetail] Note document found:", docSnap.data());
         const fetchedData = docSnap.data() as NoteData;
         const completeNoteData = { ...fetchedData, ownerUid: effectiveOwnerUid, id: docSnap.id, sharedWith: fetchedData.sharedWith || {} };
         setNoteData(completeNoteData);
         setTitle(completeNoteData.title);
         setContent(completeNoteData.content);
+        setIsEditMode(isOwner); // Owner starts in edit, shared view starts in read
       } else {
-        console.warn("[NoteDetail] Note document not found or no access.");
         toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
         if (user) router.push('/notes');
       }
@@ -131,7 +132,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     } finally {
       setIsLoading(false);
     }
-  }, [noteIdFromPath, effectiveOwnerUid, user, ownerUidFromQuery, toast, router]);
+  }, [noteIdFromPath, effectiveOwnerUid, user, ownerUidFromQuery, toast, router, isOwner]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -141,15 +142,18 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       router.push(`/login?redirect=${encodeURIComponent(redirectPath)}`);
       return;
     }
-    fetchNoteDetails();
+    if (noteIdFromPath === 'new' && user && !ownerUidFromQuery) {
+      setIsEditMode(true); // Ensure new notes are in edit mode
+      setIsLoading(false);
+    } else {
+      fetchNoteDetails();
+    }
   }, [noteIdFromPath, user, authLoading, ownerUidFromQuery, pathname, router, toast, fetchNoteDetails]);
 
 
-  // Fetch active share links for this note if the current user is the owner
   useEffect(() => {
     if (isOwner && noteIdFromPath && noteIdFromPath !== 'new' && user) {
       setIsLoadingLinks(true);
-      console.log(`[NoteDetail] Fetching share links for note: ${noteIdFromPath}, owner: ${user.uid}`);
       const linksQuery = query(
         collection(db, 'sharedNoteLinks'),
         where('noteId', '==', noteIdFromPath),
@@ -160,7 +164,6 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
         snapshot.forEach((doc) => {
           links.push({ id: doc.id, ...doc.data() } as SharedLinkData);
         });
-        console.log(`[NoteDetail] Found ${links.length} share links.`);
         setActiveShareLinks(links);
         setIsLoadingLinks(false);
       }, (error) => {
@@ -195,7 +198,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
       content: content,
       updatedAt: serverTimestamp(),
       ownerUid: user.uid, 
-      sharedWith: noteData?.sharedWith || {}, // Preserve existing sharing info
+      sharedWith: noteData?.sharedWith || {},
     };
 
     try {
@@ -297,23 +300,23 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={displayTitleForPage}
+        title={isEditMode && isOwner ? (noteIdFromPath === 'new' ? 'Create New Note' : 'Edit Note') : (title || noteData?.title || 'View Note')}
         description={
           isSharedView && noteData ? `Shared by: ${noteData.ownerUid || 'Unknown'}. Read-only.` :
           (noteIdFromPath === 'new' ? 'Craft your new note here.' : `Last updated: ${noteData?.updatedAt?.toDate().toLocaleDateString() || 'N/A'}`)
         }
         actions={
           <div className="flex flex-col sm:flex-row gap-2">
-            {isOwner && noteIdFromPath !== 'new' && (
-              <Button onClick={handleSaveNote} disabled={isSaving}>
-                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {isSaving ? 'Saving...' : 'Update Note'}
-              </Button>
+            {isOwner && (
+                <Button onClick={() => setIsEditMode(!isEditMode)} variant="outline" disabled={isSaving}>
+                    {isEditMode ? <Eye className="mr-2 h-4 w-4" /> : <Edit className="mr-2 h-4 w-4" />}
+                    {isEditMode ? 'Switch to Read Mode' : 'Switch to Edit Mode'}
+                </Button>
             )}
-             {isOwner && noteIdFromPath === 'new' && (
+            {isOwner && isEditMode && (
               <Button onClick={handleSaveNote} disabled={isSaving}>
                 {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {isSaving ? 'Saving...' : 'Save Note'}
+                {isSaving ? 'Saving...' : (noteIdFromPath === 'new' ? 'Save Note' : 'Update Note')}
               </Button>
             )}
             {noteIdFromPath !== 'new' && (
@@ -332,37 +335,44 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
 
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div>
-            <Input
-              placeholder="Note Title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className={cn(
-                "text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto",
-                (isSaving || !isOwner) && "disabled:bg-transparent disabled:opacity-100 disabled:cursor-default"
-              )}
-              disabled={isSaving || !isOwner}
-              readOnly={!isOwner}
-            />
-          </div>
-          <div>
-            <Textarea
-              placeholder="Start writing your note here... Markdown is supported!"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className={cn(
-                "min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50",
-                (isSaving || !isOwner) && "disabled:bg-muted/30 disabled:opacity-100 disabled:cursor-default"
-              )}
-              rows={15}
-              disabled={isSaving || !isOwner}
-              readOnly={!isOwner}
-            />
-          </div>
+          {isEditMode && isOwner ? (
+            <>
+              <div>
+                <Input
+                  placeholder="Note Title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="text-2xl font-headline font-semibold border-0 shadow-none focus-visible:ring-0 px-1 h-auto"
+                  disabled={isSaving}
+                />
+              </div>
+              <div>
+                <Textarea
+                  placeholder="Start writing your note here... Markdown is supported!"
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  className="min-h-[400px] md:min-h-[500px] text-base leading-relaxed focus-visible:ring-primary/50"
+                  rows={15}
+                  disabled={isSaving}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 className="text-3xl font-headline font-bold mb-4 px-1">{title || noteData?.title || "Untitled Note"}</h1>
+              <div className="prose prose-sm sm:prose-base lg:prose-lg xl:prose-xl 2xl:prose-2xl dark:prose-invert max-w-none p-1">
+                <ReactMarkdown>{content || noteData?.content || ""}</ReactMarkdown>
+              </div>
+            </>
+          )}
         </CardContent>
          <CardContent className="border-t pt-4 pb-4">
             <p className="text-sm text-muted-foreground">
-                {isOwner ? "Use Markdown for formatting (e.g., `# Heading`, `**bold**`, `*italic*`, `- list item`)." : "This note is shared with you in read-only mode."}
+                {isOwner && isEditMode ? "Use Markdown for formatting (e.g., `# Heading`, `**bold**`, `*italic*`, `- list item`)." : 
+                 isSharedView ? "This note is shared with you in read-only mode." :
+                 isOwner && !isEditMode ? "Currently in read-only viewing mode." :
+                 "Viewing note content."
+                }
             </p>
         </CardContent>
       </Card>
@@ -427,4 +437,3 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     </div>
   );
 }
-
