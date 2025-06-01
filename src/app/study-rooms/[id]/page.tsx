@@ -53,6 +53,8 @@ const AI_USER_NAME = 'AI Helper';
 const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI';
 const AI_MENTION_NAME = 'help_me';
 const SUMMARIZE_COMMAND = '/summarize';
+const SUGGESTION_COMMAND = '/suggestion';
+const ASK_COMMAND = '/ask';
 
 
 // Suggestion types
@@ -350,59 +352,88 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     setShowMentionSuggestions(false); 
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
+    
+    let isCommand = false;
 
+    // Check for /summarize command
     if (trimmedMessage.toLowerCase().startsWith(SUMMARIZE_COMMAND)) {
+      isCommand = true;
       setIsSummarizing(true);
-      // Post a temporary "Summarizing..." message
       const summarizingMessageData = {
-        userId: AI_USER_ID,
-        userName: AI_USER_NAME,
-        userAvatar: AI_AVATAR_URL,
+        userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
         text: "Summarizing the recent chat discussion...",
-        timestamp: serverTimestamp() as Timestamp // Cast as it resolves to Timestamp
+        timestamp: serverTimestamp() as Timestamp
       };
       try {
         await addDoc(messagesColRef, summarizingMessageData);
-        const recentMessages = messages
-          .slice(-30) // Take last 30 messages
-          .map(msg => ({ userName: msg.userName, text: msg.text })); // Format for AI flow
-        
-        const summaryInput: ChatSummaryInput = { messages: recentMessages };
-        const summaryResult = await getChatSummary(summaryInput);
-        
+        const recentMessages = messages.slice(-30).map(msg => ({ userName: msg.userName, text: msg.text }));
+        const summaryResult = await getChatSummary({ messages: recentMessages });
         const aiSummaryMessageData = {
-          userId: AI_USER_ID,
-          userName: AI_USER_NAME,
-          userAvatar: AI_AVATAR_URL,
+          userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
           text: `Summary:\n${summaryResult.summary}`,
-          timestamp: serverTimestamp() as Timestamp // Cast
+          timestamp: serverTimestamp() as Timestamp
         };
         await addDoc(messagesColRef, aiSummaryMessageData);
-
       } catch (summaryError) {
         console.error("Error getting chat summary:", summaryError);
         const aiErrorMessageData = {
-          userId: AI_USER_ID,
-          userName: AI_USER_NAME,
-          userAvatar: AI_AVATAR_URL,
+          userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
           text: "Sorry, I had trouble summarizing the chat. Please try again.",
-          timestamp: serverTimestamp() as Timestamp // Cast
+          timestamp: serverTimestamp() as Timestamp
         };
         await addDoc(messagesColRef, aiErrorMessageData).catch(e => console.error("Error posting summary error msg:", e));
       } finally {
         setIsSummarizing(false);
         setIsSendingMessage(false);
       }
-      return; // Command processed
+    }
+    // Check for /suggestion or /ask command
+    else if (trimmedMessage.toLowerCase().startsWith(SUGGESTION_COMMAND + ' ') || trimmedMessage.toLowerCase().startsWith(ASK_COMMAND + ' ')) {
+      isCommand = true;
+      const command = trimmedMessage.toLowerCase().startsWith(SUGGESTION_COMMAND) ? SUGGESTION_COMMAND : ASK_COMMAND;
+      const aiQuery = trimmedMessage.substring(command.length).trim();
+
+      if (aiQuery) {
+        const thinkingMessageData = {
+          userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
+          text: "AI Helper is thinking...",
+          timestamp: serverTimestamp() as Timestamp
+        };
+        const thinkingDocRef = await addDoc(messagesColRef, thinkingMessageData);
+        try {
+          const aiResult = await getAIChatResponse({ userQuery: aiQuery });
+          await updateDoc(thinkingDocRef, {
+            text: aiResult.aiResponse,
+            timestamp: serverTimestamp()
+          });
+        } catch (aiError) {
+          console.error("Error getting AI response for /suggestion:", aiError);
+          await updateDoc(thinkingDocRef, {
+            text: "Sorry, I had trouble processing that. Please try again or rephrase.",
+            timestamp: serverTimestamp()
+          });
+        }
+      } else {
+         // Post a message indicating the command was used without a query
+        const emptyQueryMessage = {
+            userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
+            text: `You used ${command} but didn't provide a question. How can I help?`,
+            timestamp: serverTimestamp() as Timestamp
+        };
+        await addDoc(messagesColRef, emptyQueryMessage);
+      }
+       setIsSendingMessage(false);
     }
 
+    if (isCommand) return; // Command processed
 
+    // Regular message sending
     const userMessageData = {
       userId: currentUserProfile.uid,
       userName: currentUserProfile.name,
       userAvatar: currentUserProfile.avatar,
       text: trimmedMessage,
-      timestamp: serverTimestamp() as Timestamp // Cast
+      timestamp: serverTimestamp() as Timestamp 
     };
 
     try {
@@ -412,28 +443,21 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         const aiQueryMatch = trimmedMessage.match(new RegExp(`@${AI_MENTION_NAME}\\s*(.*)`, 'i'));
         const aiQuery = aiQueryMatch && aiQueryMatch[1] ? aiQueryMatch[1].trim() : "User mentioned me.";
 
-
         if (aiQuery) {
-          // Post a temporary "AI is thinking..." message
           const thinkingMessageData = {
-            userId: AI_USER_ID,
-            userName: AI_USER_NAME,
-            userAvatar: AI_AVATAR_URL,
+            userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
             text: "AI Helper is thinking...",
-            timestamp: serverTimestamp() as Timestamp // Cast
+            timestamp: serverTimestamp() as Timestamp
           };
           const thinkingDocRef = await addDoc(messagesColRef, thinkingMessageData);
-
-
           try {
             const aiResult = await getAIChatResponse({ userQuery: aiQuery });
-            // Update the "thinking" message with the actual response
             await updateDoc(thinkingDocRef, {
               text: aiResult.aiResponse,
-              timestamp: serverTimestamp() // Update timestamp to keep it last
+              timestamp: serverTimestamp()
             });
           } catch (aiError) {
-            console.error("Error getting AI response:", aiError);
+            console.error("Error getting AI response for @mention:", aiError);
              await updateDoc(thinkingDocRef, {
               text: "Sorry, I had trouble processing that. Please try again or rephrase your question.",
               timestamp: serverTimestamp()
@@ -444,6 +468,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
+      // Permission error logging remains the same
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
          console.error(
           `Firestore 'create' for /studyRooms/${roomId}/messages DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
@@ -664,8 +689,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-1 min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
-                <div className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
+            <div className="flex-grow min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
                     <div className="p-2 md:p-4 space-y-4"> {/* Padding inside scrollable */}
                         {messages.map((msg) => {
                         const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
@@ -755,7 +780,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                   value={newMessage}
                   onChange={handleNewMessageChange} 
                   onKeyDown={handleInputKeyDown} 
-                  placeholder={`Type /summarize, or @${AI_MENTION_NAME} for AI...`}
+                  placeholder={`Type /summarize, /suggestion, or @${AI_MENTION_NAME}...`}
                   className="flex-grow"
                   disabled={!currentUserProfile || isSendingMessage || isSummarizing}
                   autoComplete="off"
