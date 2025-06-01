@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookOpen, Save, Loader2, Share2, AlertCircle } from 'lucide-react';
-import { useState, useEffect, use } from 'react'; // Added 'use'
+import { useState, useEffect } from 'react'; 
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,14 +22,12 @@ interface NoteData {
   updatedAt?: Timestamp;
 }
 
-// Updated params type to be a Promise
-export default function NoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const resolvedParams = use(params); // Resolve the promise
-  const noteId = resolvedParams.id; // Access id from the resolved object
+export default function NoteDetailPage({ params }: { params: { id: string } }) {
+  const { id: noteId } = params; 
 
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [isLoading, setIsLoading] = useState(true); // For note data loading
+  const [isLoading, setIsLoading] = useState(true); 
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
@@ -37,14 +35,13 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
   const pathname = usePathname();
 
   useEffect(() => {
-    if (authLoading) return; // Wait for auth state
+    if (authLoading) return; 
     if (!user) {
       toast({ title: "Authentication Required", description: "Please log in to view or edit notes.", variant: "destructive" });
-      router.push(`/login?redirect=${pathname}`); // Use pathname for accurate redirect
+      router.push(`/login?redirect=${pathname}`); 
       return;
     }
 
-    // If user is authenticated, proceed to fetch or initialize note
     if (noteId && noteId !== 'new') {
       setIsLoading(true);
       const noteDocRef = doc(db, 'users', user.uid, 'notes', noteId);
@@ -55,7 +52,7 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
           setContent(noteData.content);
         } else {
           toast({ title: "Note not found", description: "The requested note does not exist or you don't have access.", variant: "destructive" });
-          router.push('/notes'); // Redirect to notes list if specific note not found
+          router.push('/notes'); 
         }
         setIsLoading(false);
       }).catch(error => {
@@ -69,7 +66,6 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
       setContent('');
       setIsLoading(false);
     } else {
-      // Invalid noteId case, though unlikely if routing is correct
       router.push('/notes');
       setIsLoading(false);
     }
@@ -114,7 +110,7 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
     }
   };
 
-  if (authLoading || isLoading) { // Show loader if auth is loading OR note data is loading
+  if (authLoading || isLoading) { 
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -122,7 +118,7 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
     );
   }
   
-  if (!user && !authLoading) { // This handles the case where auth is done, user is null
+  if (!user && !authLoading) { 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -133,12 +129,11 @@ export default function NoteDetailPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  // User is authenticated, proceed to render note editor
   return (
     <div className="space-y-6">
       <PageHeader
         title={noteId === 'new' ? 'Create New Note' : title || 'Edit Note'}
-        description={noteId === 'new' ? 'Craft your new note here.' : `Last updated: ${new Date().toLocaleDateString()}`} // Consider showing actual updatedAt
+        description={noteId === 'new' ? 'Craft your new note here.' : `Last updated: ${new Date().toLocaleDateString()}`} 
         actions={
           <div className="flex flex-col sm:flex-row gap-2">
             <Button onClick={handleSaveNote} disabled={isSaving}>

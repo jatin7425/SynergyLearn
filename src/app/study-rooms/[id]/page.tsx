@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical } from 'lucide-react';
-import React, { useState, useEffect, use, FormEvent, useRef, useMemo, useCallback } from 'react';
+import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command } from 'lucide-react';
+import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -52,22 +52,28 @@ const AI_USER_ID = 'AI_ASSISTANT';
 const AI_USER_NAME = 'AI Helper'; 
 const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI';
 const AI_MENTION_NAME = 'help_me';
-const SUMMARIZE_COMMAND = '/summarize';
-const SUGGESTION_COMMAND = '/suggestion';
-const ASK_COMMAND = '/ask';
+
+const slashCommands = [
+  { name: 'summarize', displayName: '/summarize', description: 'Get a summary of recent chat messages.', icon: MessageSquare },
+  { name: 'suggestion', displayName: '/suggestion <your query>', description: 'Ask the AI for a suggestion or idea.', icon: Bot },
+  { name: 'ask', displayName: '/ask <your question>', description: 'Ask the AI a general question.', icon: Bot },
+];
 
 
 // Suggestion types
-type AISuggestionType = { uid: string; name: string; displayName: string; type: 'ai'; avatar?: string };
+type AISuggestionType = { uid: string; name: string; displayName: string; type: 'ai'; avatar?: string, icon?: React.ElementType };
 type UserSuggestionType = Member & { type: 'member' };
-type MentionSuggestion = AISuggestionType | UserSuggestionType;
+type CommandSuggestionType = typeof slashCommands[0] & { type: 'command', uid: string };
+
+type MentionSuggestion = AISuggestionType | UserSuggestionType | CommandSuggestionType;
 
 const aiHelpSuggestionItem: AISuggestionType = { 
-  uid: 'ai_special_id', 
+  uid: `ai_special_${AI_MENTION_NAME}`, 
   name: AI_MENTION_NAME, 
   displayName: `AI Helper (@${AI_MENTION_NAME})`, 
   type: 'ai',
-  avatar: AI_AVATAR_URL 
+  avatar: AI_AVATAR_URL,
+  icon: Bot
 };
 
 
@@ -129,9 +135,8 @@ function renderMessageWithTags(
 }
 
 
-export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) {
-  const resolvedParams = use(props.params);
-  const { id: roomId } = resolvedParams || {};
+export default function StudyRoomDetailPage({ params }: { params: { id:string } }) {
+  const { id: roomId } = params;
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -226,9 +231,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         const fetchedMessages: Message[] = [];
         snapshot.forEach(doc => {
             const data = doc.data();
-            // Ensure timestamp is a Firestore Timestamp object; serverTimestamp() resolves to this.
-            // For local rendering before server confirm, it might be an estimate or null.
-            // For this specific model, we now assume timestamp is always present as Timestamp after Firestore sync.
             fetchedMessages.push({ id: doc.id, ...data } as Message)
         });
         setMessages(fetchedMessages);
@@ -251,50 +253,73 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const handleNewMessageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const MENTION_TRIGGER = '@';
+    const COMMAND_TRIGGER = '/';
     const value = e.target.value;
     setNewMessage(value);
-  
-    const words = value.split(' ');
-    const lastWord = words[words.length - 1];
-  
-    if (lastWord.startsWith(MENTION_TRIGGER) && lastWord.length > 0) { 
-      const query = lastWord.substring(1); 
-  
-      if (query.length > 0 || lastWord === MENTION_TRIGGER) { 
-        const memberSugs: UserSuggestionType[] = roomData?.members
-          .filter(member => member.name.toLowerCase().includes(query.toLowerCase()) || query === '') 
-          .map(member => ({ ...member, type: 'member' as const })) || [];
+
+    const currentCursorPosition = e.target.selectionStart;
+    if (currentCursorPosition === null) {
+        setShowMentionSuggestions(false);
+        return;
+    }
+    
+    let wordStartIndex = value.lastIndexOf(' ', currentCursorPosition - 1) + 1;
+    if (currentCursorPosition > 0 && value[currentCursorPosition -1] !== ' ') { 
+    } else if (currentCursorPosition > 0 && value[currentCursorPosition -1] === ' ') { 
+        wordStartIndex = currentCursorPosition;
+    }
+    
+    const currentWord = value.substring(wordStartIndex, currentCursorPosition);
+
+    if (value.startsWith(COMMAND_TRIGGER)) {
+        const query = value.substring(1);
+        const commandSugs: CommandSuggestionType[] = slashCommands
+            .filter(cmd => cmd.name.toLowerCase().startsWith(query.toLowerCase()))
+            .map(cmd => ({ ...cmd, type: 'command' as const, uid: `cmd_${cmd.name}` }));
         
-        let allSugs: MentionSuggestion[] = [];
-        if (aiHelpSuggestionItem.name.toLowerCase().includes(query.toLowerCase()) || query === '') {
-          allSugs.push(aiHelpSuggestionItem);
+        if (commandSugs.length > 0) {
+            setMentionSuggestions(commandSugs.slice(0, 7));
+            setShowMentionSuggestions(true);
+            setActiveSuggestionIndex(0);
+        } else {
+            setShowMentionSuggestions(false);
+        }
+    } else if (currentWord.startsWith(MENTION_TRIGGER)) {
+        const query = currentWord.substring(1);
+        const memberSugs: UserSuggestionType[] = roomData?.members
+            .filter(member => member.name.toLowerCase().startsWith(query.toLowerCase()))
+            .map(member => ({ ...member, type: 'member' as const })) || [];
+        
+        let allSugs: (UserSuggestionType | AISuggestionType)[] = [];
+        if (aiHelpSuggestionItem.name.toLowerCase().startsWith(query.toLowerCase())) {
+            allSugs.push(aiHelpSuggestionItem);
         }
         allSugs = [...allSugs, ...memberSugs];
         
         const uniqueSuggestions = Array.from(new Map(allSugs.map(item => [item.name, item])).values());
 
         if (uniqueSuggestions.length > 0) {
-          setMentionSuggestions(uniqueSuggestions.slice(0, 7)); 
-          setShowMentionSuggestions(true);
-          setActiveSuggestionIndex(0);
+            setMentionSuggestions(uniqueSuggestions.slice(0, 7) as MentionSuggestion[]);
+            setShowMentionSuggestions(true);
+            setActiveSuggestionIndex(0);
         } else {
-          setShowMentionSuggestions(false);
+            setShowMentionSuggestions(false);
         }
-      } else { 
-        setShowMentionSuggestions(false);
-      }
     } else {
-      setShowMentionSuggestions(false);
+        setShowMentionSuggestions(false);
     }
-  };
+};
   
   const handleSelectSuggestion = (suggestion: MentionSuggestion) => {
-    const words = newMessage.split(' ');
-    words.pop(); 
-  
-    const mentionText = `@${suggestion.name} `; 
-    setNewMessage(words.join(' ') + (words.length > 0 ? ' ' : '') + mentionText);
-    
+    let textToInsert = '';
+    if (suggestion.type === 'command') {
+        textToInsert = `/${suggestion.name} `;
+    } else if (suggestion.type === 'ai' || suggestion.type === 'member') {
+        const words = newMessage.split(' ');
+        words.pop();
+        textToInsert = words.join(' ') + (words.length > 0 ? ' ' : '') + `@${suggestion.name} `;
+    }
+    setNewMessage(textToInsert);
     setShowMentionSuggestions(false);
     setTimeout(() => inputRef.current?.focus(), 0); 
   };
@@ -320,7 +345,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   };
 
   useEffect(() => {
-    if (showMentionSuggestions && suggestionPopupRef.current && mentionSuggestions.length > 0) {
+    if (showMentionSuggestions && suggestionPopupRef.current && mentionSuggestions.length > 0 && activeSuggestionIndex < mentionSuggestions.length) {
       const activeElement = suggestionPopupRef.current.children[activeSuggestionIndex] as HTMLElement;
       if (activeElement) {
         activeElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -353,11 +378,11 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     
-    let isCommand = false;
+    let isCommandProcessed = false;
 
     // Check for /summarize command
-    if (trimmedMessage.toLowerCase().startsWith(SUMMARIZE_COMMAND)) {
-      isCommand = true;
+    if (trimmedMessage.toLowerCase() === '/summarize') {
+      isCommandProcessed = true;
       setIsSummarizing(true);
       const summarizingMessageData = {
         userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
@@ -384,13 +409,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         await addDoc(messagesColRef, aiErrorMessageData).catch(e => console.error("Error posting summary error msg:", e));
       } finally {
         setIsSummarizing(false);
-        setIsSendingMessage(false);
+        setIsSendingMessage(false); // Ensure this is reset
       }
     }
     // Check for /suggestion or /ask command
-    else if (trimmedMessage.toLowerCase().startsWith(SUGGESTION_COMMAND + ' ') || trimmedMessage.toLowerCase().startsWith(ASK_COMMAND + ' ')) {
-      isCommand = true;
-      const command = trimmedMessage.toLowerCase().startsWith(SUGGESTION_COMMAND) ? SUGGESTION_COMMAND : ASK_COMMAND;
+    else if (trimmedMessage.toLowerCase().startsWith('/suggestion ') || trimmedMessage.toLowerCase().startsWith('/ask ')) {
+      isCommandProcessed = true;
+      const command = trimmedMessage.toLowerCase().startsWith('/suggestion') ? '/suggestion' : '/ask';
       const aiQuery = trimmedMessage.substring(command.length).trim();
 
       if (aiQuery) {
@@ -407,14 +432,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             timestamp: serverTimestamp()
           });
         } catch (aiError) {
-          console.error("Error getting AI response for /suggestion:", aiError);
+          console.error("Error getting AI response for command:", aiError);
           await updateDoc(thinkingDocRef, {
             text: "Sorry, I had trouble processing that. Please try again or rephrase.",
             timestamp: serverTimestamp()
           });
         }
       } else {
-         // Post a message indicating the command was used without a query
         const emptyQueryMessage = {
             userId: AI_USER_ID, userName: AI_USER_NAME, userAvatar: AI_AVATAR_URL,
             text: `You used ${command} but didn't provide a question. How can I help?`,
@@ -422,10 +446,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         };
         await addDoc(messagesColRef, emptyQueryMessage);
       }
-       setIsSendingMessage(false);
+       setIsSendingMessage(false); // Ensure this is reset
     }
 
-    if (isCommand) return; // Command processed
+    if (isCommandProcessed) return; 
 
     // Regular message sending
     const userMessageData = {
@@ -468,7 +492,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
-      // Permission error logging remains the same
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
          console.error(
           `Firestore 'create' for /studyRooms/${roomId}/messages DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
@@ -689,57 +712,55 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-grow min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
-                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
-                    <div className="p-2 md:p-4 space-y-4"> {/* Padding inside scrollable */}
-                        {messages.map((msg) => {
-                        const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
-                        const isAIMessage = msg.userId === AI_USER_ID;
-                        return (
-                            <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
-                            {!isCurrentUserMessage && (
-                                <Avatar className="h-8 w-8">
-                                <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
-                                <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
-                                </Avatar>
-                            )}
-                            <div className={cn(
-                                "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
-                                isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
-                                : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
-                                : 'bg-card border rounded-bl-none'
-                            )}>
-                                <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                                    <span className={cn("text-xs ml-1 font-normal", 
-                                        isCurrentUserMessage ? 'text-primary-foreground/80' 
-                                        : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
-                                        : 'text-muted-foreground/80'
-                                    )}>
-                                        {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                                    </span>
-                                </p>
-                                <p className="text-sm break-words">
-                                   {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
-                                </p>
-                            </div>
-                            {isCurrentUserMessage && (
-                                <Avatar className="h-8 w-8">
-                                <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                                <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                                </Avatar>
-                            )}
-                            </div>
-                        );
-                        })}
-                        {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
-                        <div ref={messagesEndRef} />
-                    </div>
+            <div className="flex-grow min-h-0 relative border-t border-b overflow-y-auto">
+                <div ref={messagesContainerRef} className="p-2 md:p-4 space-y-4">
+                    {messages.map((msg) => {
+                    const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                    const isAIMessage = msg.userId === AI_USER_ID;
+                    return (
+                        <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                        {!isCurrentUserMessage && (
+                            <Avatar className="h-8 w-8">
+                            <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                            <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                            </Avatar>
+                        )}
+                        <div className={cn(
+                            "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
+                            isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                            : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                            : 'bg-card border rounded-bl-none'
+                        )}>
+                            <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                                <span className={cn("text-xs ml-1 font-normal", 
+                                    isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                    : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                    : 'text-muted-foreground/80'
+                                )}>
+                                    {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                                </span>
+                            </p>
+                            <p className="text-sm break-words">
+                               {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
+                            </p>
+                        </div>
+                        {isCurrentUserMessage && (
+                            <Avatar className="h-8 w-8">
+                            <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                            <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                            </Avatar>
+                        )}
+                        </div>
+                    );
+                    })}
+                    {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
+                    <div ref={messagesEndRef} />
                 </div>
             </div>
 
 
             <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t">
-              <form onSubmit={handleSendMessage} className="flex gap-2 relative"> {/* Added relative for suggestion popup positioning */}
+              <form onSubmit={handleSendMessage} className="flex gap-2 relative">
                 {showMentionSuggestions && mentionSuggestions.length > 0 && (
                   <div
                     ref={suggestionPopupRef}
@@ -758,9 +779,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                         onMouseEnter={() => setActiveSuggestionIndex(index)}
                         type="button" 
                       >
-                        {sug.type === 'ai' ? (
+                        {sug.type === 'command' ? (
+                            <>
+                                <Command className="mr-2 h-4 w-4 text-muted-foreground" /> {sug.displayName} <span className="ml-2 text-xs text-muted-foreground/70">{sug.description}</span>
+                            </>
+                        ) : sug.type === 'ai' ? (
                           <>
-                            <Bot className="mr-2 h-4 w-4 text-accent" /> {sug.displayName}
+                            {sug.icon ? <sug.icon className="mr-2 h-4 w-4 text-accent" /> : <Bot className="mr-2 h-4 w-4 text-accent" />}
+                            {sug.displayName}
                           </>
                         ) : (
                           <>
@@ -780,7 +806,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                   value={newMessage}
                   onChange={handleNewMessageChange} 
                   onKeyDown={handleInputKeyDown} 
-                  placeholder={`Type /summarize, /suggestion, or @${AI_MENTION_NAME}...`}
+                  placeholder={`Type message, /command, or @mention...`}
                   className="flex-grow"
                   disabled={!currentUserProfile || isSendingMessage || isSummarizing}
                   autoComplete="off"

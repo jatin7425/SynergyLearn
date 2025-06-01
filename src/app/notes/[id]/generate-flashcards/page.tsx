@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, FileText, Save, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
-import { use, useState, useEffect, FormEvent } from 'react'; 
+import { useState, useEffect, FormEvent } from 'react'; 
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput, type GenerateFlashcardsAndQuizzesOutput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
@@ -48,9 +48,8 @@ const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Pro
 };
 
 
-export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
-  const resolvedParams = use(props.params);
-  const { id: noteId } = resolvedParams || {}; 
+export default function GenerateFlashcardsPage({ params }: { params: { id: string } }) {
+  const { id: noteId } = params; 
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -199,7 +198,6 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         const collectionsRef = collection(db, 'users', user.uid, 'studyCollections');
         await addDoc(collectionsRef, collectionData);
         toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved to your collections.`});
-        // Do not clear collectionTitle here, user might want to save another version
         setShowSaveDialog(false);
     } catch (error) {
         console.error("Error saving collection: ", error);
