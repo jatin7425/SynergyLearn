@@ -54,7 +54,7 @@ export default function MainLayout({ children }: PropsWithChildren) {
           </div>
           <UserNav />
         </header>
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6">
           {children}
         </main>
       </SidebarInset>
