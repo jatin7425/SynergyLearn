@@ -30,12 +30,11 @@ interface StudyRoom {
   id: string; // Firestore document ID
   name: string;
   topic: string;
-  memberCount: number; // Store count directly for easier listing
-  // members: string[]; // Array of user UIDs (more complex to maintain count, use memberCount)
+  memberCount: number; 
+  members: { uid: string; name: string; avatar?: string; joinedAt: Timestamp }[]; // Reflects actual member structure for joining
   createdBy: string; // User UID
   createdAt: Timestamp;
-  updatedAt?: Timestamp; // Added for consistency
-  // active: boolean; // Activity can be inferred from last message or member activity
+  updatedAt?: Timestamp; 
 }
 
 export default function StudyRoomsPage() {
@@ -93,20 +92,20 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: newRoomName.trim(),
       topic: newRoomTopic.trim(),
-      memberCount: 0, // Initial member count is 0, user joins on first visit
-      members: [], // Initialize with an empty members array
+      memberCount: 0, 
+      members: [], 
       createdBy: user.uid,
       createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(), // Added updatedAt on create
+      updatedAt: serverTimestamp(), 
     };
     try {
       const roomsColRef = collection(db, 'studyRooms');
       const docRef = await addDoc(roomsColRef, newRoomData);
-      toast({ title: "Room Created!", description: `"${newRoomName}" is now active.` });
+      toast({ title: "Room Created!", description: `"${newRoomData.name}" is now active.` });
       setNewRoomName('');
       setNewRoomTopic('');
       setShowCreateRoomDialog(false);
-      router.push(`/study-rooms/${docRef.id}`); // Navigate to the new room
+      router.push(`/study-rooms/${docRef.id}`); 
     } catch (error) {
       console.error("Error creating room: ", error);
       toast({ title: "Creation Failed", description: (error as Error).message, variant: "destructive" });
@@ -115,7 +114,7 @@ export default function StudyRoomsPage() {
     }
   };
 
-  if (authLoading || (isLoadingRooms && user)) { // Updated loading condition
+  if (authLoading || (isLoadingRooms && user)) { 
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -123,7 +122,7 @@ export default function StudyRoomsPage() {
     );
   }
 
-  if (!user && !authLoading) { // Fallback if redirect hasn't happened
+  if (!user && !authLoading) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -214,12 +213,6 @@ export default function StudyRoomsPage() {
                     <LogIn className="mr-2 h-4 w-4" /> Join Room
                   </Button>
                 </Link>
-                {/* Edit only if creator - future enhancement */}
-                {/* {user?.uid === room.createdBy && (
-                  <Button variant="ghost" size="icon" aria-label="Edit room settings" onClick={() => alert(`Edit settings for ${room.name} (Not implemented)`)}>
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                )} */}
               </CardContent>
             </Card>
           ))}
@@ -228,5 +221,3 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
-
-    
