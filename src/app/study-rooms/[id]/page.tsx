@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Added Tabs imports
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation } from 'lucide-react';
 import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -79,8 +79,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
     if (!currentUserProfile) {
         console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
-        setIsLoadingRoom(false);
-        if (!authLoading && !user) {
+        setIsLoadingRoom(false); // Ensure loading state is cleared
+        if (!authLoading && !user) { // Double check auth state before redirect
              router.push(`/login?redirect=${pathname}`);
         }
         return;
@@ -90,72 +90,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
     // Fetch main room data once
-    getDoc(roomDocRef).then(async (docSnap) => {
+    // With the new strict rules, non-creators cannot update the room document to add themselves.
+    // The 'members' array will reflect what's in Firestore, usually set by the creator or during a time with different rules.
+    getDoc(roomDocRef).then((docSnap) => {
       if (docSnap.exists()) {
-        let fetchedRoomData = { id: docSnap.id, ...docSnap.data() } as RoomData;
-        const isMember = fetchedRoomData.members?.some(m => m.uid === currentUserProfile.uid);
-
-        if (!isMember) {
-          const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
-          const newMemberPayload: Member = {
-            uid: memberData.uid,
-            name: memberData.name,
-            avatar: memberData.avatar,
-            joinedAt: memberData.joinedAt,
-          };
-
-          const roomUpdateData = {
-              members: arrayUnion(newMemberPayload),
-              memberCount: (fetchedRoomData.members?.length || 0) + 1,
-              updatedAt: serverTimestamp()
-          };
-          try {
-            await updateDoc(roomDocRef, roomUpdateData);
-            fetchedRoomData = {
-                ...fetchedRoomData,
-                members: [...(fetchedRoomData.members || []), newMemberPayload],
-                memberCount: (fetchedRoomData.memberCount || 0) + 1,
-            };
-            setRoomData(fetchedRoomData);
-          } catch (err) {
-            const firebaseError = err as FirebaseError;
-            console.error("Error joining room: ", firebaseError);
-            if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-                console.error(
-                  `Firestore 'update' for /studyRooms/${roomId} DENIED (joining room). Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
-                  `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
-                  `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
-                  `\nAttempted member data (for arrayUnion):`,
-                  JSON.stringify(newMemberPayload, (key, value) => {
-                    if (value && typeof value === 'object') {
-                      if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                        return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
-                      }
-                      if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                        return { _methodName: (value as any)._methodName };
-                      }
-                    }
-                    return value;
-                  }, 2)
-                );
-                console.error(
-                  `Attempted room update data (memberCount, updatedAt):`,
-                  JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
-                );
-                toast({
-                  title: "Error Joining Room: Permissions",
-                  description: "Could not join room due to security rule denial. Check browser console for data details.",
-                  variant: "destructive",
-                  duration: 15000
-                });
-            } else {
-                toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
-            }
-            setRoomData(fetchedRoomData); 
-          }
-        } else {
-          setRoomData(fetchedRoomData);
-        }
+        const fetchedRoomData = { id: docSnap.id, ...docSnap.data() } as RoomData;
+        setRoomData(fetchedRoomData);
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
         router.push('/study-rooms');
@@ -168,6 +108,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       setIsLoadingRoom(false);
     });
 
+    // Setup snapshot listener for messages
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -196,7 +137,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage) return;
+    if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage || !roomData) return;
 
     setIsSendingMessage(true);
     const messageData = {
@@ -211,17 +152,21 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       await addDoc(messagesColRef, messageData);
       setNewMessage('');
 
-      const roomDocRef = doc(db, 'studyRooms', roomId);
-      await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
+      // Removed: Update room's updatedAt - This is now restricted to the room creator by Firestore rules.
+      // If current user is the creator, they could still update it, but for simplicity and to align with "messages only" snapshot idea:
+      // if (currentUserProfile.uid === roomData.createdBy) {
+      //   const roomDocRef = doc(db, 'studyRooms', roomId);
+      //   await updateDoc(roomDocRef, { updatedAt: serverTimestamp() });
+      // }
 
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
         console.error(
-          `Firestore 'create' for /studyRooms/${roomId}/messages OR 'update' for /studyRooms/${roomId} (for updatedAt) DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
+          `Firestore 'create' for /studyRooms/${roomId}/messages DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
-          `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
+          `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
           JSON.stringify(messageData, (key, value) => {
             if (value && typeof value === 'object') {
@@ -234,10 +179,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             }
             return value;
           }, 2)
-        );
-        console.error(
-          `Attempted room update data (for updatedAt):`,
-          JSON.stringify({ updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
         );
          toast({
           title: "Error Sending Message: Permissions",
@@ -255,7 +196,16 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
+    
+    // With the new rules, only the creator can update the room members list.
+    // For non-creators, "leaving" is just navigating away.
+    if (currentUserProfile.uid !== roomData.createdBy) {
+        toast({ title: "Navigating Away", description: `You have left ${roomData.name}. (Your name remains in member list unless removed by creator)`});
+        router.push('/study-rooms');
+        return;
+    }
 
+    // Logic for creator to remove themselves (or any member if we build that UI)
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     if (!memberToRemove) {
         toast({title: "Error", description: "Cannot leave room, current user data not found in room members.", variant: "destructive"});
@@ -275,41 +225,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         router.push('/study-rooms');
     } catch (error) {
         const firebaseError = error as FirebaseError;
-        console.error("Error leaving room: ", firebaseError);
-        if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-            console.error(
-              `Firestore 'update' for /studyRooms/${roomId} DENIED (leaving room). Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
-              `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
-              `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
-              `\nAttempted member data (for arrayRemove):`,
-              JSON.stringify(memberToRemove, (key, value) => {
-                if (value && typeof value === 'object') {
-                  if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                    return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
-                  }
-                  if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                    return { _methodName: (value as any)._methodName };
-                  }
-                }
-                return value;
-              }, 2)
-            );
-            console.error(
-              `Attempted room update data (memberCount, updatedAt):`,
-              JSON.stringify({ memberCount: roomUpdateData.memberCount, updatedAt: {_methodName: "serverTimestamp"} }, null, 2)
-            );
-             toast({
-              title: "Error Leaving Room: Permissions",
-              description: "Could not leave room due to security rule denial. Check browser console for data details.",
-              variant: "destructive",
-              duration: 15000
-            });
-        } else {
-            toast({ title: "Error Leaving Room", description: firebaseError.message, variant: "destructive"});
-        }
+        console.error("Error leaving room (as creator): ", firebaseError);
+        // Permission error console logging can be kept for debugging if creator actions fail
+        toast({ title: "Error Leaving Room", description: firebaseError.message, variant: "destructive"});
     }
   };
 
+  const isRoomCreator = roomData?.createdBy === currentUserProfile?.uid;
 
   if (authLoading || (isLoadingRoom && currentUserProfile)) { 
     return (
@@ -353,7 +275,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               {roomData?.members?.slice(0, 3).map(member => (
                 <Avatar key={member.uid} className="h-8 w-8 border-2 border-background">
                   <AvatarImage src={member.avatar || 'https://placehold.co/40x40.png'} alt={member.name} data-ai-hint="user avatar" />
-                  <AvatarFallback>{member.name.substring(0,1).toUpperCase()}</AvatarFallback>
+                  <AvatarFallback>{member.name?.substring(0,1).toUpperCase() || 'M'}</AvatarFallback>
                 </Avatar>
               ))}
               {(roomData?.members?.length || 0) > 3 && (
@@ -363,7 +285,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               )}
             </div>
             <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData?.memberCount || 0} Members</Button>
-            <Button variant="destructive" size="sm" onClick={handleLeaveRoom}><LogOut className="mr-2 h-4 w-4" /> Leave</Button>
+            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator && !!roomData} title={!isRoomCreator && roomData ? "Only room creator can modify member list" : "Leave Room"}>
+              <LogOut className="mr-2 h-4 w-4" /> Leave
+            </Button>
           </div>
         }
       />
@@ -444,5 +368,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
-
-    
