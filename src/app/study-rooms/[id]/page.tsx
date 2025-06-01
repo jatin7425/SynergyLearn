@@ -16,6 +16,7 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
+import { getChatSummary, type ChatSummaryInput } from '@/ai/flows/summarize-chat-flow'; // Added
 import { cn } from '@/lib/utils';
 import WhiteboardCanvas, { type WhiteboardPath } from '@/components/study-rooms/WhiteboardCanvas'; // Import Whiteboard
 import { Separator } from '@/components/ui/separator';
@@ -44,13 +45,15 @@ interface Message {
   userName: string;
   userAvatar?: string;
   text: string;
-  timestamp: Timestamp | null;
+  timestamp: Timestamp; // Changed from Timestamp | null for consistency after serverTimestamp resolves
 }
 
 const AI_USER_ID = 'AI_ASSISTANT';
 const AI_USER_NAME = 'AI Helper'; 
 const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI';
 const AI_MENTION_NAME = 'help_me';
+const SUMMARIZE_COMMAND = '/summarize';
+
 
 // Suggestion types
 type AISuggestionType = { uid: string; name: string; displayName: string; type: 'ai'; avatar?: string };
@@ -138,9 +141,10 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null); 
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionPopupRef = useRef<HTMLDivElement>(null);
 
@@ -218,7 +222,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
         const fetchedMessages: Message[] = [];
-        snapshot.forEach(doc => fetchedMessages.push({ id: doc.id, ...doc.data() } as Message));
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            // Ensure timestamp is a Firestore Timestamp object; serverTimestamp() resolves to this.
+            // For local rendering before server confirm, it might be an estimate or null.
+            // For this specific model, we now assume timestamp is always present as Timestamp after Firestore sync.
+            fetchedMessages.push({ id: doc.id, ...data } as Message)
+        });
         setMessages(fetchedMessages);
     }, (error) => {
         console.error(`Firestore onSnapshot error for messages in room ${roomId}: `, error);
@@ -233,7 +243,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   useEffect(() => {
     if (messagesEndRef.current) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 100);
     }
   }, [messages]);
 
@@ -332,9 +342,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    if (showMentionSuggestions && mentionSuggestions.length > 0) {
-    }
-
     if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage || !roomData) return;
 
     const trimmedMessage = newMessage.trim();
@@ -344,12 +351,58 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
 
+    if (trimmedMessage.toLowerCase().startsWith(SUMMARIZE_COMMAND)) {
+      setIsSummarizing(true);
+      // Post a temporary "Summarizing..." message
+      const summarizingMessageData = {
+        userId: AI_USER_ID,
+        userName: AI_USER_NAME,
+        userAvatar: AI_AVATAR_URL,
+        text: "Summarizing the recent chat discussion...",
+        timestamp: serverTimestamp() as Timestamp // Cast as it resolves to Timestamp
+      };
+      try {
+        await addDoc(messagesColRef, summarizingMessageData);
+        const recentMessages = messages
+          .slice(-30) // Take last 30 messages
+          .map(msg => ({ userName: msg.userName, text: msg.text })); // Format for AI flow
+        
+        const summaryInput: ChatSummaryInput = { messages: recentMessages };
+        const summaryResult = await getChatSummary(summaryInput);
+        
+        const aiSummaryMessageData = {
+          userId: AI_USER_ID,
+          userName: AI_USER_NAME,
+          userAvatar: AI_AVATAR_URL,
+          text: `Summary:\n${summaryResult.summary}`,
+          timestamp: serverTimestamp() as Timestamp // Cast
+        };
+        await addDoc(messagesColRef, aiSummaryMessageData);
+
+      } catch (summaryError) {
+        console.error("Error getting chat summary:", summaryError);
+        const aiErrorMessageData = {
+          userId: AI_USER_ID,
+          userName: AI_USER_NAME,
+          userAvatar: AI_AVATAR_URL,
+          text: "Sorry, I had trouble summarizing the chat. Please try again.",
+          timestamp: serverTimestamp() as Timestamp // Cast
+        };
+        await addDoc(messagesColRef, aiErrorMessageData).catch(e => console.error("Error posting summary error msg:", e));
+      } finally {
+        setIsSummarizing(false);
+        setIsSendingMessage(false);
+      }
+      return; // Command processed
+    }
+
+
     const userMessageData = {
       userId: currentUserProfile.uid,
       userName: currentUserProfile.name,
       userAvatar: currentUserProfile.avatar,
       text: trimmedMessage,
-      timestamp: serverTimestamp()
+      timestamp: serverTimestamp() as Timestamp // Cast
     };
 
     try {
@@ -361,26 +414,30 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
 
         if (aiQuery) {
+          // Post a temporary "AI is thinking..." message
+          const thinkingMessageData = {
+            userId: AI_USER_ID,
+            userName: AI_USER_NAME,
+            userAvatar: AI_AVATAR_URL,
+            text: "AI Helper is thinking...",
+            timestamp: serverTimestamp() as Timestamp // Cast
+          };
+          const thinkingDocRef = await addDoc(messagesColRef, thinkingMessageData);
+
+
           try {
             const aiResult = await getAIChatResponse({ userQuery: aiQuery });
-            const aiResponseMessageData = {
-              userId: AI_USER_ID,
-              userName: AI_USER_NAME,
-              userAvatar: AI_AVATAR_URL,
+            // Update the "thinking" message with the actual response
+            await updateDoc(thinkingDocRef, {
               text: aiResult.aiResponse,
-              timestamp: serverTimestamp()
-            };
-            await addDoc(messagesColRef, aiResponseMessageData);
+              timestamp: serverTimestamp() // Update timestamp to keep it last
+            });
           } catch (aiError) {
             console.error("Error getting AI response:", aiError);
-            const aiErrorMessageData = {
-              userId: AI_USER_ID,
-              userName: AI_USER_NAME,
-              userAvatar: AI_AVATAR_URL,
+             await updateDoc(thinkingDocRef, {
               text: "Sorry, I had trouble processing that. Please try again or rephrase your question.",
               timestamp: serverTimestamp()
-            };
-            await addDoc(messagesColRef, aiErrorMessageData);
+            });
           }
         }
       }
@@ -602,54 +659,59 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </TabsContent>
 
         <TabsContent value="chat" className="flex-grow flex flex-col m-0 overflow-hidden">
-           <Card className="flex flex-col flex-grow overflow-hidden overflow-y-auto min-h-[85vh]">
+           <Card className="flex flex-col flex-grow overflow-hidden min-h-[85vh]">
             <CardHeader className="sticky top-0 bg-background z-10 py-3 px-4 flex-shrink-0 border-b">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div ref={messagesContainerRef} className="flex-grow p-2 md:p-4 space-y-4 overflow-y-auto max-h-[70vh]"> 
-                {messages.map((msg) => {
-                const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
-                const isAIMessage = msg.userId === AI_USER_ID;
-                return (
-                    <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
-                    {!isCurrentUserMessage && (
-                        <Avatar className="h-8 w-8">
-                        <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
-                        <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
-                        </Avatar>
-                    )}
-                    <div className={cn(
-                        "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
-                        isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
-                        : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
-                        : 'bg-card border rounded-bl-none'
-                    )}>
-                        <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                            <span className={cn("text-xs ml-1 font-normal", 
-                                isCurrentUserMessage ? 'text-primary-foreground/80' 
-                                : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
-                                : 'text-muted-foreground/80'
+            <div className="flex-1 min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
+                <div className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
+                    <div className="p-2 md:p-4 space-y-4"> {/* Padding inside scrollable */}
+                        {messages.map((msg) => {
+                        const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                        const isAIMessage = msg.userId === AI_USER_ID;
+                        return (
+                            <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                            {!isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8">
+                                <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                                <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                                </Avatar>
+                            )}
+                            <div className={cn(
+                                "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
+                                isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                                : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                                : 'bg-card border rounded-bl-none'
                             )}>
-                                {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                            </span>
-                        </p>
-                        <p className="text-sm break-words">
-                           {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
-                        </p>
+                                <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                                    <span className={cn("text-xs ml-1 font-normal", 
+                                        isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                        : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                        : 'text-muted-foreground/80'
+                                    )}>
+                                        {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                                    </span>
+                                </p>
+                                <p className="text-sm break-words">
+                                   {renderMessageWithTags(msg.text, roomData?.members, AI_MENTION_NAME, currentUserProfile?.uid)}
+                                </p>
+                            </div>
+                            {isCurrentUserMessage && (
+                                <Avatar className="h-8 w-8">
+                                <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                                <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                                </Avatar>
+                            )}
+                            </div>
+                        );
+                        })}
+                        {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
+                        <div ref={messagesEndRef} />
                     </div>
-                    {isCurrentUserMessage && (
-                        <Avatar className="h-8 w-8">
-                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                        </Avatar>
-                    )}
-                    </div>
-                );
-                })}
-                {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@{AI_MENTION_NAME}</code> for assistance!</p>}
-                <div ref={messagesEndRef} />
+                </div>
             </div>
+
 
             <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t">
               <form onSubmit={handleSendMessage} className="flex gap-2 relative"> {/* Added relative for suggestion popup positioning */}
@@ -693,13 +755,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                   value={newMessage}
                   onChange={handleNewMessageChange} 
                   onKeyDown={handleInputKeyDown} 
-                  placeholder={`Type a message, or @${AI_MENTION_NAME} for AI...`}
+                  placeholder={`Type /summarize, or @${AI_MENTION_NAME} for AI...`}
                   className="flex-grow"
-                  disabled={!currentUserProfile || isSendingMessage}
+                  disabled={!currentUserProfile || isSendingMessage || isSummarizing}
                   autoComplete="off"
                 />
-                <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || newMessage.trim() === ''}>
-                  {isSendingMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                <Button type="submit" size="icon" aria-label="Send message" disabled={!currentUserProfile || isSendingMessage || isSummarizing || newMessage.trim() === ''}>
+                  {(isSendingMessage || isSummarizing) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </form>
             </CardContent>
@@ -709,3 +771,4 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
+
