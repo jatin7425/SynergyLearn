@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, FileText, Save, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
-import { useState, useEffect, FormEvent, use } from 'react'; // Added use
+import { useState, useEffect, FormEvent, use } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput, type GenerateFlashcardsAndQuizzesOutput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
@@ -48,9 +48,9 @@ const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Pro
 };
 
 
-export default function GenerateFlashcardsPage(props: { params: { id: string } }) { // Changed signature
-  const resolvedParams = use(props.params); // Added use(props.params)
-  const { id: noteId } = resolvedParams || {}; // Destructure from resolvedParams
+export default function GenerateFlashcardsPage(props: { params: { id: string } }) {
+  const resolvedParams = use(props.params);
+  const { id: noteId } = resolvedParams || {};
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -396,3 +396,5 @@ export default function GenerateFlashcardsPage(props: { params: { id: string } }
     </div>
   );
 }
+
+    

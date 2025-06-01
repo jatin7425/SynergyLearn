@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command } from 'lucide-react';
-import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback, use } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -147,13 +147,12 @@ function renderMessageWithTags(
 }
 
 
-export default function StudyRoomDetailPage({ params }: { params: { id: string } }) {
-  const { id: roomId } = params;
+export default function StudyRoomDetailPage(props: { params: { id: string } }) {
+  const resolvedParams = use(props.params);
+  const { id: roomId } = resolvedParams || {};
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  // const pathname = router.pathname; // usePathname is a hook, router.pathname for string
-  // For client components, usePathname hook is preferred:
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
 
 
@@ -840,12 +839,12 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
                                       <div className={cn(
                                         "flex gap-1 mt-1.5 justify-end transition-opacity opacity-0 group-hover:opacity-100"
                                       )}>
-                                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-muted-foreground hover:text-primary-foreground/80" onClick={() => handleStartEdit(msg)} title="Edit message">
+                                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-primary-foreground/90" onClick={() => handleStartEdit(msg)} title="Edit message">
                                           <Edit2 className="h-3 w-3" />
                                         </Button>
                                         <AlertDialog>
                                           <AlertDialogTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive-foreground/80" title="Delete message">
+                                            <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-destructive-foreground/80" title="Delete message">
                                               <Trash2 className="h-3 w-3" />
                                             </Button>
                                           </AlertDialogTrigger>
@@ -910,7 +909,7 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
                       >
                         {sug.type === 'command' ? (
                             <>
-                                <Command className="mr-2 h-4 w-4 text-muted-foreground" /> {sug.displayName} <span className="ml-2 text-xs text-muted-foreground/70">{sug.description}</span>
+                                {sug.icon ? <sug.icon className="mr-2 h-4 w-4 text-muted-foreground" /> : <Command className="mr-2 h-4 w-4 text-muted-foreground" /> } {sug.displayName} <span className="ml-2 text-xs text-muted-foreground/70">{sug.description}</span>
                             </>
                         ) : sug.type === 'ai' ? (
                           <>
@@ -952,3 +951,4 @@ export default function StudyRoomDetailPage({ params }: { params: { id: string }
   );
 }
 
+    
