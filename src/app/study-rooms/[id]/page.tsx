@@ -129,9 +129,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   useEffect(() => {
     if (messagesEndRef.current) {
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 0);
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages]);
 
@@ -350,49 +348,53 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             <CardHeader className="py-3 px-4 flex-shrink-0">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
-            <ScrollArea className="flex-grow min-h-0 border-t border-b">
-                <div className="space-y-4 p-2 md:p-4">
-                    {messages.map((msg) => {
-                    const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
-                    const isAIMessage = msg.userId === AI_USER_ID;
-                    return (
-                        <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
-                        {!isCurrentUserMessage && (
-                            <Avatar className="h-8 w-8">
-                            <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
-                            <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
-                            </Avatar>
-                        )}
-                        <div className={cn(
-                            "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
-                            isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
-                            : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
-                            : 'bg-card border rounded-bl-none'
-                        )}>
-                            <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                                <span className={cn("text-xs ml-1 font-normal", 
-                                    isCurrentUserMessage ? 'text-primary-foreground/80' 
-                                    : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
-                                    : 'text-muted-foreground/80'
-                                )}>
-                                    {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                                </span>
-                            </p>
-                            <p className="text-sm break-words">{msg.text}</p>
-                        </div>
-                        {isCurrentUserMessage && (
-                            <Avatar className="h-8 w-8">
-                            <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                            <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                            </Avatar>
-                        )}
-                        </div>
-                    );
-                    })}
-                    {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
-                    <div ref={messagesEndRef} />
-                </div>
-            </ScrollArea>
+            
+            <div className="flex-1 min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
+              <ScrollArea className="absolute inset-0">
+                  <div className="space-y-4 p-2 md:p-4">
+                      {messages.map((msg) => {
+                      const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                      const isAIMessage = msg.userId === AI_USER_ID;
+                      return (
+                          <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                          {!isCurrentUserMessage && (
+                              <Avatar className="h-8 w-8">
+                              <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                              <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                              </Avatar>
+                          )}
+                          <div className={cn(
+                              "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
+                              isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                              : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                              : 'bg-card border rounded-bl-none'
+                          )}>
+                              <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                                  <span className={cn("text-xs ml-1 font-normal", 
+                                      isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                      : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                      : 'text-muted-foreground/80'
+                                  )}>
+                                      {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                                  </span>
+                              </p>
+                              <p className="text-sm break-words">{msg.text}</p>
+                          </div>
+                          {isCurrentUserMessage && (
+                              <Avatar className="h-8 w-8">
+                              <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                              <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                              </Avatar>
+                          )}
+                          </div>
+                      );
+                      })}
+                      {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
+                      <div ref={messagesEndRef} />
+                  </div>
+              </ScrollArea>
+            </div>
+
             <CardContent className="pt-2 md:pt-4 pb-2 flex-shrink-0">
               <form onSubmit={handleSendMessage} className="flex gap-2">
                 <Input
@@ -414,4 +416,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   );
 }
 
-    
