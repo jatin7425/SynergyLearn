@@ -32,7 +32,8 @@ interface StoredScheduleData {
   holidayEndTime?: string;
   utilizeHolidays: boolean;
   startDateForOutline: string;
-  weeklyOutline: (WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean, summary?: string })[]; // Added summary
+  // Each item in weeklyOutline can now store its dailyTasks and a flag
+  weeklyOutline: (WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean, summary?: string })[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -65,13 +66,12 @@ export default function SchedulePage() {
   const [holidayEndTime, setHolidayEndTime] = useState('');
   const [utilizeHolidays, setUtilizeHolidays] = useState(false);
 
-  // State for generated content
-  const [weeklyOutline, setWeeklyOutline] = useState<(WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean, summary?:string })[]>([]);
+  // State for generated content and UI control
   const [isLoadingWeeklyOutline, setIsLoadingWeeklyOutline] = useState(false);
   const [isLoadingDailyTasksForWeek, setIsLoadingDailyTasksForWeek] = useState<number | null>(null); // weekNumber
 
   const [activeMainTab, setActiveMainTab] = useState<string>("configure");
-  const [activeWeekTab, setActiveWeekTab] = useState<string | undefined>(undefined);
+  const [selectedWeekNumberForDetails, setSelectedWeekNumberForDetails] = useState<number | null>(null);
 
   const [isLoadingStoredSchedule, setIsLoadingStoredSchedule] = useState(true);
   const [storedScheduleData, setStoredScheduleData] = useState<StoredScheduleData | null>(null);
@@ -120,17 +120,22 @@ export default function SchedulePage() {
         setHolidayStartTime(data.holidayStartTime || '');
         setHolidayEndTime(data.holidayEndTime || '');
         setUtilizeHolidays(data.utilizeHolidays || false);
-        setWeeklyOutline(data.weeklyOutline || []);
-        if ((data.weeklyOutline || []).length > 0 && !activeWeekTab) {
-            setActiveWeekTab(`week-${data.weeklyOutline[0].weekNumber}`);
-        }
+        
         if ((data.weeklyOutline || []).length > 0) {
-            setActiveMainTab("weeklyDetails"); // Switch to details tab if outline exists
+            if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
+              setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
+            }
+            if (activeMainTab === "configure") { // Only switch if currently on configure
+                setActiveMainTab("weeklyDetails");
+            }
+        } else {
+            setSelectedWeekNumberForDetails(null); // No outline, no selected week
         }
+
       } else {
         setStoredScheduleData(null);
-        setWeeklyOutline([]);
-        setActiveMainTab("configure"); // Default to configure if no schedule
+        setSelectedWeekNumberForDetails(null);
+        setActiveMainTab("configure");
       }
       setIsLoadingStoredSchedule(false);
     }, (error) => {
@@ -159,7 +164,7 @@ export default function SchedulePage() {
       unsubscribeSchedule();
       unsubscribeTimeState();
     };
-  }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeWeekTab]);
+  }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeMainTab]);
 
 
   const handleGenerateWeeklyOutline = async (e: FormEvent) => {
@@ -168,14 +173,10 @@ export default function SchedulePage() {
       toast({ title: "Missing Information", description: "Learning goal and working day start/end times are required.", variant: "destructive" });
       return;
     }
-    if (selectedHolidays.length > 0 && (!holidayStartTime || !holidayEndTime) && utilizeHolidays) {
-      // Allow empty holiday times if utilizeHolidays is false or if they don't want to study on holidays
-    }
     if (!user) return;
 
     setIsLoadingWeeklyOutline(true);
-    setWeeklyOutline([]);
-    setActiveWeekTab(undefined);
+    setSelectedWeekNumberForDetails(null); // Reset selected week
 
     try {
       const startDateForOutline = format(new Date(), 'yyyy-MM-dd');
@@ -192,15 +193,10 @@ export default function SchedulePage() {
       };
       const result: GenerateWeeklyOutlineOutput = await generateWeeklyOutline(input);
       
-      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false }));
-      setWeeklyOutline(outlineWithEmptyTasks);
-      if (outlineWithEmptyTasks.length > 0) {
-        setActiveWeekTab(`week-${outlineWithEmptyTasks[0].weekNumber}`);
-        setActiveMainTab("weeklyDetails"); // Switch to details tab
-      }
-
+      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary }));
+      
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
-      await setDoc(scheduleDocRef, {
+      const dataToSave = {
         overallGoal: learningGoal,
         overallDuration: scheduleDuration,
         workingDayStartTime,
@@ -211,9 +207,17 @@ export default function SchedulePage() {
         utilizeHolidays,
         startDateForOutline,
         weeklyOutline: outlineWithEmptyTasks,
-        createdAt: storedScheduleData?.createdAt || serverTimestamp(), // Preserve original creation if exists
+        createdAt: storedScheduleData?.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp()
-      }, { merge: true }); // Merge to preserve createdAt if document exists
+      };
+
+      await setDoc(scheduleDocRef, dataToSave, { merge: true });
+      setStoredScheduleData(prev => ({...prev, ...dataToSave, weeklyOutline: outlineWithEmptyTasks, id: 'mainSchedule', createdAt: prev?.createdAt || Timestamp.now()})); // Update local state
+
+      if (outlineWithEmptyTasks.length > 0) {
+        setSelectedWeekNumberForDetails(outlineWithEmptyTasks[0].weekNumber);
+        setActiveMainTab("weeklyDetails");
+      }
 
       toast({ title: "Weekly Outline Generated!", description: "Your high-level weekly plan is ready." });
     } catch (error) {
@@ -232,7 +236,7 @@ export default function SchedulePage() {
       const input: GenerateDailyTasksInput = {
         periodGoal: week.goalOrTopic,
         periodStartDate: week.startDate,
-        periodDurationDays: 7, // Assuming 7 days for a week
+        periodDurationDays: 7,
         workingDayStartTime: storedScheduleData.workingDayStartTime,
         workingDayEndTime: storedScheduleData.workingDayEndTime,
         weeklyHolidays: storedScheduleData.weeklyHolidays,
@@ -243,18 +247,18 @@ export default function SchedulePage() {
 
       const result: GenerateDailyTasksOutput = await generateDailyTasks(input);
       
-      const updatedWeeklyOutline = weeklyOutline.map(w => 
+      const updatedWeeklyOutline = storedScheduleData.weeklyOutline.map(w => 
         w.weekNumber === week.weekNumber 
-        ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary } 
+        ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary || w.summary } 
         : w
       );
-      setWeeklyOutline(updatedWeeklyOutline);
-
+      
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       await updateDoc(scheduleDocRef, {
         weeklyOutline: updatedWeeklyOutline,
         updatedAt: serverTimestamp()
       });
+      // No need to call setStoredScheduleData, onSnapshot will update it.
 
       toast({ title: `Daily Plan for Week ${week.weekNumber} Generated!`, description: `Topic: ${week.goalOrTopic}` });
     } catch (error) {
@@ -265,7 +269,8 @@ export default function SchedulePage() {
     }
   };
 
-  const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
+  // --- Time Tracking Functions (unchanged from previous, but ensure they use storedScheduleData if needed) ---
+   const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
     if (!user) return;
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
     try {
@@ -301,7 +306,7 @@ export default function SchedulePage() {
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        const lastClockIn = timeTrackingState.lastClockInTime as Timestamp;
+        const lastClockIn = timeTrackingState.lastClockInTime as Timestamp; // Cast to Timestamp for arithmetic
         durationMinutes = Math.round((now.seconds - lastClockIn.seconds) / 60);
     }
 
@@ -379,6 +384,8 @@ export default function SchedulePage() {
   const canEndBreak = timeTrackingState?.status === 'on_break';
   const canEndLunch = timeTrackingState?.status === 'on_lunch';
 
+  const currentSelectedWeekData = storedScheduleData?.weeklyOutline?.find(w => w.weekNumber === selectedWeekNumberForDetails);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -406,7 +413,9 @@ export default function SchedulePage() {
       <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="configure">Configure & Outline</TabsTrigger>
-          <TabsTrigger value="weeklyDetails" disabled={weeklyOutline.length === 0}>Weekly Details</TabsTrigger>
+          <TabsTrigger value="weeklyDetails" disabled={!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0}>
+            Weekly Details
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="configure" className="mt-4">
@@ -487,84 +496,92 @@ export default function SchedulePage() {
             <Card>
                 <CardHeader>
                 <CardTitle>Weekly Learning Plan</CardTitle>
-                {weeklyOutline.length > 0 && <CardDescription>Select a week to view or generate its daily tasks.</CardDescription>}
+                {(!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && <CardDescription>Generate a weekly outline first from the "Configure & Outline" tab.</CardDescription>}
+                {(storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0) && <CardDescription>Select a week to view or generate its detailed daily tasks.</CardDescription>}
                 </CardHeader>
                 <CardContent>
                 {isLoadingWeeklyOutline && <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
-                {!isLoadingWeeklyOutline && weeklyOutline.length === 0 && (
+                
+                {!isLoadingWeeklyOutline && storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0 && (
+                  <div className="space-y-4">
+                    <Select 
+                        value={selectedWeekNumberForDetails?.toString()} 
+                        onValueChange={(value) => setSelectedWeekNumberForDetails(Number(value))}
+                    >
+                      <SelectTrigger className="w-full md:w-[300px]">
+                        <SelectValue placeholder="Select a week" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {storedScheduleData.weeklyOutline.map(week => (
+                          <SelectItem key={`week-select-${week.weekNumber}`} value={week.weekNumber.toString()}>
+                            Week {week.weekNumber}: {week.goalOrTopic.substring(0,30)}{week.goalOrTopic.length > 30 ? '...' : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {currentSelectedWeekData && (
+                       <Card className="mt-4">
+                        <CardHeader>
+                            <CardTitle>Week {currentSelectedWeekData.weekNumber}: {currentSelectedWeekData.goalOrTopic}</CardTitle>
+                            <CardDescription>Dates: {format(parseISO(currentSelectedWeekData.startDate), 'MMM d, yyyy')} - {format(parseISO(currentSelectedWeekData.endDate), 'MMM d, yyyy')}</CardDescription>
+                            {currentSelectedWeekData.summary && <p className="text-sm text-muted-foreground mt-2"><em>Weekly Summary: {currentSelectedWeekData.summary}</em></p>}
+                        </CardHeader>
+                        <CardContent>
+                            {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber && (
+                            <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                            )}
+                            {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && (!currentSelectedWeekData.dailyTasks || currentSelectedWeekData.dailyTasks.length === 0) && (
+                            <div className="text-center py-4">
+                                <p className="text-sm text-muted-foreground mb-2">No daily tasks generated for this week yet.</p>
+                                <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
+                                <CalendarPlus className="mr-2 h-4 w-4" /> Generate Daily Plan for Week {currentSelectedWeekData.weekNumber}
+                                </Button>
+                            </div>
+                            )}
+                            {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && currentSelectedWeekData.dailyTasks && currentSelectedWeekData.dailyTasks.length > 0 && (
+                            <>
+                                <div className="overflow-x-auto max-h-[400px] mb-4">
+                                <Table>
+                                    <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Date</TableHead>
+                                        <TableHead>Day</TableHead>
+                                        <TableHead>Topic / Task</TableHead>
+                                        <TableHead>Est. Duration</TableHead>
+                                        <TableHead>Time Slot</TableHead>
+                                    </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                    {currentSelectedWeekData.dailyTasks.map((task, index) => (
+                                        <TableRow key={index}>
+                                        <TableCell>{task.date}</TableCell>
+                                        <TableCell>{task.dayOfWeek}</TableCell>
+                                        <TableCell>{task.topic}</TableCell>
+                                        <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
+                                        <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                    </TableBody>
+                                </Table>
+                                </div>
+                                <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} variant="outline" disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
+                                {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                                Regenerate Daily Plan
+                                </Button>
+                            </>
+                            )}
+                        </CardContent>
+                        </Card>
+                    )}
+                  </div>
+                )}
+                {!isLoadingWeeklyOutline && (!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && (
                     <div className="text-center py-8 text-muted-foreground">
                     <CalendarDays className="mx-auto h-12 w-12 opacity-50 mb-4" />
                     <p>No weekly outline generated yet.</p>
                     <p className="text-sm">Go to the "Configure & Outline" tab to generate one.</p>
                     </div>
-                )}
-                {!isLoadingWeeklyOutline && weeklyOutline.length > 0 && (
-                    <Tabs value={activeWeekTab} onValueChange={setActiveWeekTab} className="w-full" orientation="vertical">
-                      <TabsList className="grid w-full grid-cols-1 h-auto md:w-1/4"> {/* Adjust width as needed */}
-                        {weeklyOutline.map(week => (
-                          <TabsTrigger key={`week-tab-${week.weekNumber}`} value={`week-${week.weekNumber}`} className="justify-start py-3">
-                            Week {week.weekNumber}
-                            <span className="text-xs text-muted-foreground ml-2 truncate hidden sm:inline">({week.goalOrTopic.substring(0,20)}{week.goalOrTopic.length > 20 ? '...' : ''})</span>
-                          </TabsTrigger>
-                        ))}
-                      </TabsList>
-                      {weeklyOutline.map(week => (
-                        <TabsContent key={`week-content-${week.weekNumber}`} value={`week-${week.weekNumber}`} className="mt-0 md:pl-4 w-full md:w-3/4">
-                          <Card>
-                            <CardHeader>
-                              <CardTitle>Week {week.weekNumber}: {week.goalOrTopic}</CardTitle>
-                              <CardDescription>Dates: {format(parseISO(week.startDate), 'MMM d, yyyy')} - {format(parseISO(week.endDate), 'MMM d, yyyy')}</CardDescription>
-                              {week.summary && <p className="text-sm text-muted-foreground mt-2"><em>Weekly Summary: {week.summary}</em></p>}
-                            </CardHeader>
-                            <CardContent>
-                              {isLoadingDailyTasksForWeek === week.weekNumber && (
-                                <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
-                              )}
-                              {isLoadingDailyTasksForWeek !== week.weekNumber && (!week.dailyTasks || week.dailyTasks.length === 0) && (
-                                <div className="text-center py-4">
-                                  <p className="text-sm text-muted-foreground mb-2">No daily tasks generated for this week yet.</p>
-                                  <Button onClick={() => handleGenerateDailyTasksForWeek(week)} disabled={isLoadingDailyTasksForWeek === week.weekNumber}>
-                                    <CalendarPlus className="mr-2 h-4 w-4" /> Generate Daily Plan for Week {week.weekNumber}
-                                  </Button>
-                                </div>
-                              )}
-                              {isLoadingDailyTasksForWeek !== week.weekNumber && week.dailyTasks && week.dailyTasks.length > 0 && (
-                                <>
-                                  <div className="overflow-x-auto max-h-[400px] mb-4">
-                                    <Table>
-                                      <TableHeader>
-                                        <TableRow>
-                                          <TableHead>Date</TableHead>
-                                          <TableHead>Day</TableHead>
-                                          <TableHead>Topic / Task</TableHead>
-                                          <TableHead>Est. Duration</TableHead>
-                                          <TableHead>Time Slot</TableHead>
-                                        </TableRow>
-                                      </TableHeader>
-                                      <TableBody>
-                                        {week.dailyTasks.map((task, index) => (
-                                          <TableRow key={index}>
-                                            <TableCell>{task.date}</TableCell>
-                                            <TableCell>{task.dayOfWeek}</TableCell>
-                                            <TableCell>{task.topic}</TableCell>
-                                            <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
-                                            <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
-                                          </TableRow>
-                                        ))}
-                                      </TableBody>
-                                    </Table>
-                                  </div>
-                                  <Button onClick={() => handleGenerateDailyTasksForWeek(week)} variant="outline" disabled={isLoadingDailyTasksForWeek === week.weekNumber}>
-                                    {isLoadingDailyTasksForWeek === week.weekNumber ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-                                    Regenerate Daily Plan
-                                  </Button>
-                                </>
-                              )}
-                            </CardContent>
-                          </Card>
-                        </TabsContent>
-                      ))}
-                    </Tabs>
                 )}
                 </CardContent>
             </Card>
@@ -573,4 +590,3 @@ export default function SchedulePage() {
     </div>
   );
 }
-
