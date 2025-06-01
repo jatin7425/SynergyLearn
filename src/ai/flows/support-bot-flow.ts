@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview A support bot that answers user questions based on the application's README.md file.
@@ -47,13 +48,19 @@ const supportBotPrompt = ai.definePrompt({
   name: 'supportBotPrompt',
   input: { schema: SupportBotInputSchema.extend({ readmeContent: z.string() }) },
   output: { schema: SupportBotOutputSchema },
-  prompt: `You are a helpful and friendly support assistant for the SynergyLearn application.
-Your knowledge base is strictly limited to the content of the document provided below.
-Answer the user's question based ONLY on the information found in this document.
-If the answer is not present in the document, clearly state that you don't have the information based on the provided context or that the README does not cover this specific topic.
-Do not invent information or use any external knowledge.
-Keep your answers concise and directly relevant to the user's query and the document's content.
-If the user asks a general question not related to the app's functionality described in the document, politely state that you can only answer questions about SynergyLearn based on the provided README.
+  prompt: `You are a friendly and helpful support assistant for the SynergyLearn application.
+Your knowledge base is strictly limited to the content of the document provided below (the application's README).
+Your goal is to answer the user's question in a conversational and easy-to-understand way, based ONLY on the information found in this document.
+
+When answering:
+1.  Rephrase information from the document into clear, step-by-step instructions if applicable.
+2.  Speak like a helpful assistant, not like you are quoting a document. For example, instead of saying "Navigate to /notes/new", you might say "You can create a new note by going to the 'Notes' section and looking for a 'New Note' button."
+3.  Avoid directly quoting technical paths (like /notes/new) or overly literal UI element names from the document unless it's essential for clarity and rephrased.
+4.  Do NOT mention the document itself (e.g., do not say "According to the README..." or "The document states..."). Assume the user knows you are using this information.
+5.  If the answer is not present in the document, clearly state that you don't have information on that specific topic or that the application's guide doesn't cover it.
+6.  Do not invent information or use any external knowledge.
+7.  Keep your answers concise and directly relevant to the user's query.
+8.  If the user asks a general question not related to the app's functionality described in the document, politely state that you can only answer questions about SynergyLearn based on the provided information.
 
 User's Question: "{{{userQuery}}}"
 
@@ -62,7 +69,7 @@ Document Content (README.md):
 {{{readmeContent}}}
 ---
 
-Based on the document, provide your answer:
+Based *only* on the document content, provide your helpful, conversational answer to the user's question:
 `,
 });
 
@@ -86,3 +93,4 @@ const supportBotFlow = ai.defineFlow(
     return output;
   }
 );
+
