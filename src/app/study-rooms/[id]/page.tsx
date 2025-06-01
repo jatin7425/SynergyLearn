@@ -607,7 +607,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div ref={messagesContainerRef} className="flex-grow p-2 md:p-4 space-y-4"> 
+            <div ref={messagesContainerRef} className="flex-grow p-2 md:p-4 space-y-4 overflow-y-auto max-h-[70vh]"> 
                 {messages.map((msg) => {
                 const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
                 const isAIMessage = msg.userId === AI_USER_ID;

@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { cn } from '@/lib/utils'; // Added this import
 
 export interface WhiteboardPath {
   id: string;
