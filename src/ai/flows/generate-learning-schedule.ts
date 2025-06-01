@@ -88,6 +88,7 @@ Instructions:
 7.  **Pacing:** Distribute the workload reasonably. Avoid overloading any single day.
 8.  **Duration:** The schedule must span the entire '{{{scheduleDuration}}}' from the '{{{startDate}}}'.
 9.  **Output Format:** Ensure the output is valid JSON matching the 'GenerateLearningScheduleOutputSchema'. The 'schedule' field must be an array of 'DailyTaskSchema' objects.
+10. **Granularity:** For ALL selected durations (1 month, 1 year, 2 years), the output MUST be a day-by-day schedule. Provide a 'DailyTask' object for each individual day within the entire schedule duration. Do NOT summarize into weekly or monthly tasks for longer durations.
 
 Example DailyTask object:
 {
@@ -99,7 +100,7 @@ Example DailyTask object:
 }
 
 Provide a concise 'summary' of the plan if you wish.
-Be realistic with the amount of content that can be covered.
+Be realistic with the amount of content that can be covered. For very long durations like 1 or 2 years, ensure topics are appropriately high-level for daily tasks but still provide a clear focus for each day.
 `,
 });
 
