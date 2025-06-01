@@ -200,12 +200,22 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
       if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
-        console.error(
+         console.error(
           `Firestore 'create' for /studyRooms/${roomId}/messages DENIED. Client User UID: ${currentUserProfile?.uid || 'N/A'}.` +
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
-          JSON.stringify(userMessageData, null, 2) 
+          JSON.stringify(userMessageData, (key, value) => { // Enhanced stringify for Firestore specific types
+            if (value && typeof value === 'object') {
+              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
+                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
+              }
+              if (value && typeof value === 'object' && (value as any)._methodName && (value as any)._methodName.includes('timestamp')) {
+                return { _methodName: (value as any)._methodName }; // For serverTimestamp()
+              }
+            }
+            return value;
+          }, 2) 
         );
          toast({
           title: "Error Sending Message: Permissions",
@@ -232,7 +242,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         return;
     }
     
-    // If creator is leaving, they might still be in the members list if added manually or by old logic
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     
     const roomUpdateData: Partial<RoomData> = {
@@ -324,7 +333,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </TabsList>
 
         <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col">
-          <Card className="flex-grow flex flex-col">
+          <Card className="flex-grow flex flex-col overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
                 <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
                 <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
@@ -340,11 +349,11 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </TabsContent>
 
         <TabsContent value="chat" className="flex-grow m-0 flex flex-col">
-          <Card className="flex flex-col flex-grow">
+          <Card className="flex flex-col flex-grow overflow-hidden">
             <CardHeader className="py-3 px-4">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
-            <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={chatScrollAreaRef}>
+            <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b min-h-0" ref={chatScrollAreaRef}>
               <div className="space-y-4">
                 {messages.map((msg) => {
                   const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
