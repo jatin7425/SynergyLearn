@@ -9,28 +9,30 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause, ListChecks, CalendarPlus } from 'lucide-react';
 import { useState, type FormEvent, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { generateLearningSchedule, type GenerateLearningScheduleInput, type GenerateLearningScheduleOutput } from '@/ai/flows/generate-learning-schedule';
+import { generateWeeklyOutline, type GenerateWeeklyOutlineInput, type GenerateWeeklyOutlineOutput, type WeeklyGoalItem } from '@/ai/flows/generate-weekly-outline';
+import { generateDailyTasks, type GenerateDailyTasksInput, type GenerateDailyTasksOutput, type DailyTask } from '@/ai/flows/generate-daily-tasks';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
-import { format } from 'date-fns';
+import { format, addDays, parseISO } from 'date-fns';
 
-interface DailyTask {
-  date: string;
-  dayOfWeek: string;
-  topic: string;
-  estimatedDuration?: string;
-  timeSlot?: string;
-}
-
-interface StoredSchedule {
-  id: string;
-  parameters: GenerateLearningScheduleInput;
-  schedule: DailyTask[];
+interface StoredScheduleData {
+  id: string; // mainSchedule
+  overallGoal: string;
+  overallDuration: '1 month' | '1 year' | '2 years';
+  workingDayStartTime: string;
+  workingDayEndTime: string;
+  weeklyHolidays: string[];
+  holidayStartTime?: string;
+  holidayEndTime?: string;
+  utilizeHolidays: boolean;
+  startDateForOutline: string;
+  weeklyOutline: (WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean })[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -45,7 +47,7 @@ interface TimeTrackingState {
   currentSessionId?: string | null;
 }
 
-const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const allDaysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function SchedulePage() {
   const { user, loading: authLoading } = useAuth();
@@ -53,29 +55,32 @@ export default function SchedulePage() {
   const pathname = usePathname();
   const { toast } = useToast();
 
+  // Form state for overall schedule parameters
   const [learningGoal, setLearningGoal] = useState('');
   const [scheduleDuration, setScheduleDuration] = useState<'1 month' | '1 year' | '2 years'>('1 month');
-  
   const [workingDayStartTime, setWorkingDayStartTime] = useState('');
   const [workingDayEndTime, setWorkingDayEndTime] = useState('');
-  
   const [selectedHolidays, setSelectedHolidays] = useState<string[]>([]);
   const [holidayStartTime, setHolidayStartTime] = useState('');
   const [holidayEndTime, setHolidayEndTime] = useState('');
+  const [utilizeHolidays, setUtilizeHolidays] = useState(false);
 
-  const [utilizeHolidays, setUtilizeHolidays] = useState(false); // Kept this for AI context if holidays are for lighter load or strict off days
+  // State for generated content
+  const [weeklyOutline, setWeeklyOutline] = useState<(WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean })[]>([]);
+  const [isLoadingWeeklyOutline, setIsLoadingWeeklyOutline] = useState(false);
+  const [isLoadingDailyTasksForWeek, setIsLoadingDailyTasksForWeek] = useState<number | null>(null); // weekNumber
 
-  const [generatedSchedule, setGeneratedSchedule] = useState<DailyTask[]>([]);
-  const [scheduleSummary, setScheduleSummary] = useState<string | null>(null);
-  const [isLoadingScheduleAI, setIsLoadingScheduleAI] = useState(false);
+  const [activeTab, setActiveTab] = useState<string | undefined>(undefined); // weekNumber as string
+
+  // Loading and persistence state
   const [isLoadingStoredSchedule, setIsLoadingStoredSchedule] = useState(true);
-  const [storedScheduleData, setStoredScheduleData] = useState<StoredSchedule | null>(null);
+  const [storedScheduleData, setStoredScheduleData] = useState<StoredScheduleData | null>(null);
 
   const [timeTrackingState, setTimeTrackingState] = useState<TimeTrackingState | null>(null);
   const [isLoadingTimeState, setIsLoadingTimeState] = useState(true);
 
   const handleHolidayChange = (day: string) => {
-    setSelectedHolidays(prev => 
+    setSelectedHolidays(prev =>
       prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
     );
   };
@@ -102,26 +107,26 @@ export default function SchedulePage() {
     }
     fetchLearningGoalFromProfile();
 
-    const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'main');
+    const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
     const unsubscribeSchedule = onSnapshot(scheduleDocRef, (docSnap) => {
       if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as StoredSchedule;
+        const data = { id: docSnap.id, ...docSnap.data() } as StoredScheduleData;
         setStoredScheduleData(data);
-        setGeneratedSchedule(data.schedule);
-        setScheduleSummary(data.parameters.learningGoal); 
-        
-        setLearningGoal(data.parameters.learningGoal);
-        setScheduleDuration(data.parameters.scheduleDuration);
-        setWorkingDayStartTime(data.parameters.workingDayStartTime || '');
-        setWorkingDayEndTime(data.parameters.workingDayEndTime || '');
-        setSelectedHolidays(data.parameters.weeklyHolidays || []);
-        setHolidayStartTime(data.parameters.holidayStartTime || '');
-        setHolidayEndTime(data.parameters.holidayEndTime || '');
-        setUtilizeHolidays(data.parameters.utilizeHolidays);
-
+        setLearningGoal(data.overallGoal);
+        setScheduleDuration(data.overallDuration);
+        setWorkingDayStartTime(data.workingDayStartTime || '');
+        setWorkingDayEndTime(data.workingDayEndTime || '');
+        setSelectedHolidays(data.weeklyHolidays || []);
+        setHolidayStartTime(data.holidayStartTime || '');
+        setHolidayEndTime(data.holidayEndTime || '');
+        setUtilizeHolidays(data.utilizeHolidays || false);
+        setWeeklyOutline(data.weeklyOutline || []);
+        if ((data.weeklyOutline || []).length > 0 && !activeTab) {
+            setActiveTab(`week-${data.weeklyOutline[0].weekNumber}`);
+        }
       } else {
         setStoredScheduleData(null);
-        setGeneratedSchedule([]);
+        setWeeklyOutline([]);
       }
       setIsLoadingStoredSchedule(false);
     }, (error) => {
@@ -129,80 +134,134 @@ export default function SchedulePage() {
       toast({ title: "Error loading schedule", variant: "destructive" });
       setIsLoadingStoredSchedule(false);
     });
-    
+
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
     const unsubscribeTimeState = onSnapshot(timeStateDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            setTimeTrackingState(docSnap.data() as TimeTrackingState);
-        } else {
-            const initialTimeState: TimeTrackingState = { status: 'clocked_out' };
-            setDoc(timeStateDocRef, initialTimeState).catch(err => console.error("Error initializing time state", err));
-            setTimeTrackingState(initialTimeState);
-        }
-        setIsLoadingTimeState(false);
+      if (docSnap.exists()) {
+        setTimeTrackingState(docSnap.data() as TimeTrackingState);
+      } else {
+        const initialTimeState: TimeTrackingState = { status: 'clocked_out' };
+        setDoc(timeStateDocRef, initialTimeState).catch(err => console.error("Error initializing time state", err));
+        setTimeTrackingState(initialTimeState);
+      }
+      setIsLoadingTimeState(false);
     }, (error) => {
-        console.error("Error fetching time tracking state: ", error);
-        toast({title: "Error loading time state", variant: "destructive"});
-        setIsLoadingTimeState(false);
+      console.error("Error fetching time tracking state: ", error);
+      toast({ title: "Error loading time state", variant: "destructive" });
+      setIsLoadingTimeState(false);
     });
 
     return () => {
-        unsubscribeSchedule();
-        unsubscribeTimeState();
+      unsubscribeSchedule();
+      unsubscribeTimeState();
     };
-  }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile]);
+  }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeTab]);
 
-  const handleGenerateSchedule = async (e: FormEvent) => {
+
+  const handleGenerateWeeklyOutline = async (e: FormEvent) => {
     e.preventDefault();
     if (!learningGoal.trim() || !workingDayStartTime || !workingDayEndTime) {
       toast({ title: "Missing Information", description: "Learning goal and working day start/end times are required.", variant: "destructive" });
       return;
     }
-    if (selectedHolidays.length > 0 && (!holidayStartTime || !holidayEndTime)) {
-        toast({ title: "Missing Information", description: "Holiday start/end times are required if holidays are selected.", variant: "destructive"});
-        return;
+    if (selectedHolidays.length > 0 && (!holidayStartTime || !holidayEndTime) && utilizeHolidays) {
+      toast({ title: "Missing Information", description: "Holiday start/end times are required if utilizing holidays for study.", variant: "destructive" });
+      return;
     }
     if (!user) return;
 
-    setIsLoadingScheduleAI(true);
-    setGeneratedSchedule([]);
-    setScheduleSummary(null);
+    setIsLoadingWeeklyOutline(true);
+    setWeeklyOutline([]);
+    setActiveTab(undefined);
 
     try {
-      const startDate = format(new Date(), 'yyyy-MM-dd');
-      const input: GenerateLearningScheduleInput = {
-        learningGoal, 
-        scheduleDuration, 
+      const startDateForOutline = format(new Date(), 'yyyy-MM-dd');
+      const input: GenerateWeeklyOutlineInput = {
+        overallLearningGoal: learningGoal,
+        scheduleDuration,
         workingDayStartTime,
         workingDayEndTime,
         weeklyHolidays: selectedHolidays,
         holidayStartTime: selectedHolidays.length > 0 ? holidayStartTime : undefined,
         holidayEndTime: selectedHolidays.length > 0 ? holidayEndTime : undefined,
-        utilizeHolidays, // This can inform AI if holidays are for "catch-up" or total rest
-        startDate
+        utilizeHolidays,
+        startDateForOutline
       };
-      const result: GenerateLearningScheduleOutput = await generateLearningSchedule(input);
-      setGeneratedSchedule(result.schedule);
-      setScheduleSummary(result.summary || `Schedule for: ${learningGoal}`);
+      const result: GenerateWeeklyOutlineOutput = await generateWeeklyOutline(input);
+      
+      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false }));
+      setWeeklyOutline(outlineWithEmptyTasks);
+      if (outlineWithEmptyTasks.length > 0) {
+        setActiveTab(`week-${outlineWithEmptyTasks[0].weekNumber}`);
+      }
 
-      const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'main');
+      const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       await setDoc(scheduleDocRef, {
-        parameters: input,
-        schedule: result.schedule,
-        summary: result.summary,
+        overallGoal: learningGoal,
+        overallDuration: scheduleDuration,
+        workingDayStartTime,
+        workingDayEndTime,
+        weeklyHolidays: selectedHolidays,
+        holidayStartTime: selectedHolidays.length > 0 ? holidayStartTime : undefined,
+        holidayEndTime: selectedHolidays.length > 0 ? holidayEndTime : undefined,
+        utilizeHolidays,
+        startDateForOutline,
+        weeklyOutline: outlineWithEmptyTasks, // Save outline without daily tasks initially
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      });
 
-      toast({ title: "Schedule Generated!", description: "Your new learning schedule is ready." });
+      toast({ title: "Weekly Outline Generated!", description: "Your high-level weekly plan is ready." });
     } catch (error) {
-      console.error('Error generating schedule:', error);
-      toast({ title: "Schedule Generation Failed", description: (error as Error).message, variant: "destructive" });
+      console.error('Error generating weekly outline:', error);
+      toast({ title: "Outline Generation Failed", description: (error as Error).message, variant: "destructive" });
     } finally {
-      setIsLoadingScheduleAI(false);
+      setIsLoadingWeeklyOutline(false);
     }
   };
-  
+
+  const handleGenerateDailyTasksForWeek = async (week: WeeklyGoalItem) => {
+    if (!user || !storedScheduleData) return;
+    setIsLoadingDailyTasksForWeek(week.weekNumber);
+
+    try {
+      const input: GenerateDailyTasksInput = {
+        periodGoal: week.goalOrTopic,
+        periodStartDate: week.startDate,
+        periodDurationDays: 7, // Assuming 7 days for a week
+        workingDayStartTime: storedScheduleData.workingDayStartTime,
+        workingDayEndTime: storedScheduleData.workingDayEndTime,
+        weeklyHolidays: storedScheduleData.weeklyHolidays,
+        holidayStartTime: storedScheduleData.holidayStartTime,
+        holidayEndTime: storedScheduleData.holidayEndTime,
+        utilizeHolidays: storedScheduleData.utilizeHolidays,
+      };
+
+      const result: GenerateDailyTasksOutput = await generateDailyTasks(input);
+      
+      const updatedWeeklyOutline = weeklyOutline.map(w => 
+        w.weekNumber === week.weekNumber 
+        ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary } 
+        : w
+      );
+      setWeeklyOutline(updatedWeeklyOutline);
+
+      const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
+      await updateDoc(scheduleDocRef, {
+        weeklyOutline: updatedWeeklyOutline,
+        updatedAt: serverTimestamp()
+      });
+
+      toast({ title: `Daily Plan for Week ${week.weekNumber} Generated!`, description: `Topic: ${week.goalOrTopic}` });
+    } catch (error) {
+      console.error(`Error generating daily tasks for week ${week.weekNumber}:`, error);
+      toast({ title: "Daily Plan Generation Failed", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsLoadingDailyTasksForWeek(null);
+    }
+  };
+
+
   const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
     if (!user) return;
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
@@ -239,7 +298,7 @@ export default function SchedulePage() {
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        const lastClockIn = timeTrackingState.lastClockInTime as Timestamp;
+        const lastClockIn = timeTrackingState.lastClockInTime as Timestamp; // Cast to Timestamp
         durationMinutes = Math.round((now.seconds - lastClockIn.seconds) / 60);
     }
 
@@ -292,6 +351,7 @@ export default function SchedulePage() {
       await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
   };
 
+
   if (authLoading || isLoadingStoredSchedule || isLoadingTimeState) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -309,29 +369,28 @@ export default function SchedulePage() {
       </div>
     );
   }
-  
+
   const canClockIn = timeTrackingState?.status === 'clocked_out';
   const canClockOut = timeTrackingState?.status === 'clocked_in';
-  const canStartBreak = timeTrackingState?.status === 'clocked_in';
+  const canStartBreakOrLunch = timeTrackingState?.status === 'clocked_in';
   const canEndBreak = timeTrackingState?.status === 'on_break';
-  const canStartLunch = timeTrackingState?.status === 'clocked_in';
   const canEndLunch = timeTrackingState?.status === 'on_lunch';
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Learning Schedule & Time Tracking"
-        description="Generate your personalized study plan and track your learning sessions."
+        description="Generate your weekly learning outline, then drill down into daily tasks for each week."
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="md:col-span-1">
           <CardHeader>
-            <CardTitle>Generate Your Schedule</CardTitle>
-            <CardDescription>Tell the AI about your goals and availability.</CardDescription>
+            <CardTitle>Schedule Parameters</CardTitle>
+            <CardDescription>Define your overall learning goal and availability.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleGenerateSchedule} className="space-y-4">
+            <form onSubmit={handleGenerateWeeklyOutline} className="space-y-4">
               <div>
                 <Label htmlFor="learningGoal">Primary Learning Goal</Label>
                 <Input id="learningGoal" value={learningGoal} onChange={(e) => setLearningGoal(e.target.value)} placeholder="e.g., Master Next.js and Tailwind CSS" required />
@@ -359,7 +418,7 @@ export default function SchedulePage() {
               <div>
                 <Label>Weekly Holidays (Select days off)</Label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
-                    {daysOfWeek.map(day => (
+                    {allDaysOfWeek.map(day => (
                         <div key={day} className="flex items-center space-x-2 p-2 border rounded-md">
                             <Checkbox 
                                 id={`holiday-${day}`} 
@@ -374,24 +433,24 @@ export default function SchedulePage() {
 
               {selectedHolidays.length > 0 && (
                 <div>
-                    <Label>Holiday Availability (if different)</Label>
+                    <Label>Holiday Availability (Optional)</Label>
                     <div className="flex gap-2">
                         <Input type="time" id="holidayStartTime" value={holidayStartTime} onChange={(e) => setHolidayStartTime(e.target.value)} aria-label="Holiday start time"/>
                         <Input type="time" id="holidayEndTime" value={holidayEndTime} onChange={(e) => setHolidayEndTime(e.target.value)} aria-label="Holiday end time"/>
                     </div>
-                     <p className="text-xs text-muted-foreground mt-1">Leave blank if holidays are complete rest days and you don't want to utilize them for study.</p>
+                     <p className="text-xs text-muted-foreground mt-1">Define if you plan to study on these selected holidays.</p>
                 </div>
               )}
                <div className="flex items-center space-x-2 pt-2">
                 <Checkbox id="utilizeHolidays" checked={utilizeHolidays} onCheckedChange={(checked) => setUtilizeHolidays(Boolean(checked))} />
                 <Label htmlFor="utilizeHolidays" className="text-sm font-normal">
-                  AI can utilize selected holidays for learning if needed (e.g., for catch-up or ambitious goals).
+                  Allow AI to schedule tasks on holidays if needed and specific holiday times aren't set.
                 </Label>
               </div>
 
-              <Button type="submit" className="w-full" disabled={isLoadingScheduleAI}>
-                {isLoadingScheduleAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-                {isLoadingScheduleAI ? 'Generating...' : (storedScheduleData ? 'Regenerate Schedule' : 'Generate Schedule')}
+              <Button type="submit" className="w-full" disabled={isLoadingWeeklyOutline}>
+                {isLoadingWeeklyOutline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ListChecks className="mr-2 h-4 w-4" />}
+                {isLoadingWeeklyOutline ? 'Generating Outline...' : (storedScheduleData?.weeklyOutline?.length > 0 ? 'Regenerate Weekly Outline' : 'Generate Weekly Outline')}
               </Button>
             </form>
           </CardContent>
@@ -408,52 +467,92 @@ export default function SchedulePage() {
             <CardContent className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <Button onClick={handleClockIn} disabled={!canClockIn || isLoadingTimeState} className="bg-green-500 hover:bg-green-600 text-white"><Play className="mr-2 h-4 w-4" /> Clock In</Button>
                 <Button onClick={handleClockOut} disabled={!canClockOut || isLoadingTimeState} className="bg-red-500 hover:bg-red-600 text-white"><Pause className="mr-2 h-4 w-4" /> Clock Out</Button>
-                <Button onClick={handleStartBreak} disabled={!canStartBreak || isLoadingTimeState} variant="outline"><Coffee className="mr-2 h-4 w-4" /> Start Break</Button>
+                <Button onClick={handleStartBreak} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Coffee className="mr-2 h-4 w-4" /> Start Break</Button>
                 <Button onClick={handleEndBreak} disabled={!canEndBreak || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Break</Button>
-                <Button onClick={handleStartLunch} disabled={!canStartLunch || isLoadingTimeState} variant="outline"><Utensils className="mr-2 h-4 w-4" /> Start Lunch</Button>
+                <Button onClick={handleStartLunch} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Utensils className="mr-2 h-4 w-4" /> Start Lunch</Button>
                 <Button onClick={handleEndLunch} disabled={!canEndLunch || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Lunch</Button>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Your Learning Schedule</CardTitle>
-              {scheduleSummary && <CardDescription>{scheduleSummary}</CardDescription>}
+              <CardTitle>Weekly Learning Plan</CardTitle>
+              {weeklyOutline.length > 0 && <CardDescription>Select a week to view or generate its daily tasks.</CardDescription>}
             </CardHeader>
             <CardContent>
-              {isLoadingScheduleAI && <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
-              {!isLoadingScheduleAI && generatedSchedule.length === 0 && (
+              {isLoadingWeeklyOutline && <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
+              {!isLoadingWeeklyOutline && weeklyOutline.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
                   <CalendarDays className="mx-auto h-12 w-12 opacity-50 mb-4" />
-                  <p>Your generated schedule will appear here.</p>
-                  <p className="text-sm">Fill the form and click "Generate Schedule".</p>
+                  <p>Your weekly learning outline will appear here.</p>
+                  <p className="text-sm">Fill the parameters form and click "Generate Weekly Outline".</p>
                 </div>
               )}
-              {!isLoadingScheduleAI && generatedSchedule.length > 0 && (
-                <div className="overflow-x-auto max-h-[600px]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Day</TableHead>
-                        <TableHead>Topic / Task</TableHead>
-                        <TableHead>Est. Duration</TableHead>
-                        <TableHead>Time Slot</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {generatedSchedule.map((task, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{task.date}</TableCell>
-                          <TableCell>{task.dayOfWeek}</TableCell>
-                          <TableCell>{task.topic}</TableCell>
-                          <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
-                          <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+              {!isLoadingWeeklyOutline && weeklyOutline.length > 0 && (
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7">
+                    {weeklyOutline.map(week => (
+                      <TabsTrigger key={`week-tab-${week.weekNumber}`} value={`week-${week.weekNumber}`}>
+                        Week {week.weekNumber}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                  {weeklyOutline.map(week => (
+                    <TabsContent key={`week-content-${week.weekNumber}`} value={`week-${week.weekNumber}`} className="mt-4">
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Week {week.weekNumber}: {week.goalOrTopic}</CardTitle>
+                          <CardDescription>Dates: {format(parseISO(week.startDate), 'MMM d, yyyy')} - {format(parseISO(week.endDate), 'MMM d, yyyy')}</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          {isLoadingDailyTasksForWeek === week.weekNumber && (
+                            <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                          )}
+                          {isLoadingDailyTasksForWeek !== week.weekNumber && (!week.dailyTasks || week.dailyTasks.length === 0) && (
+                            <div className="text-center py-4">
+                              <p className="text-sm text-muted-foreground mb-2">No daily tasks generated for this week yet.</p>
+                              <Button onClick={() => handleGenerateDailyTasksForWeek(week)} disabled={isLoadingDailyTasksForWeek === week.weekNumber}>
+                                <CalendarPlus className="mr-2 h-4 w-4" /> Generate Daily Plan for Week {week.weekNumber}
+                              </Button>
+                            </div>
+                          )}
+                          {isLoadingDailyTasksForWeek !== week.weekNumber && week.dailyTasks && week.dailyTasks.length > 0 && (
+                            <>
+                              <div className="overflow-x-auto max-h-[400px] mb-4">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Date</TableHead>
+                                      <TableHead>Day</TableHead>
+                                      <TableHead>Topic / Task</TableHead>
+                                      <TableHead>Est. Duration</TableHead>
+                                      <TableHead>Time Slot</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {week.dailyTasks.map((task, index) => (
+                                      <TableRow key={index}>
+                                        <TableCell>{task.date}</TableCell>
+                                        <TableCell>{task.dayOfWeek}</TableCell>
+                                        <TableCell>{task.topic}</TableCell>
+                                        <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
+                                        <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                              <Button onClick={() => handleGenerateDailyTasksForWeek(week)} variant="outline" disabled={isLoadingDailyTasksForWeek === week.weekNumber}>
+                                {isLoadingDailyTasksForWeek === week.weekNumber ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                                Regenerate Daily Plan
+                              </Button>
+                            </>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                  ))}
+                </Tabs>
               )}
             </CardContent>
           </Card>
@@ -462,4 +561,3 @@ export default function SchedulePage() {
     </div>
   );
 }
-

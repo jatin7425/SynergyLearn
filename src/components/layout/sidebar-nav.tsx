@@ -15,7 +15,7 @@ import {
   BookOpen,
   HelpCircle,
   Award,
-  CalendarClock, // Added for Schedule
+  CalendarClock,
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -31,7 +31,7 @@ const navItems = [
   { href: '/roadmap', label: 'Roadmap', icon: GitFork },
   { href: '/notes', label: 'Notes', icon: FileText },
   { href: '/flashcards-quizzes', label: 'Flashcards & Quizzes', icon: BookOpen },
-  { href: '/schedule', label: 'Schedule', icon: CalendarClock }, // Added Schedule
+  { href: '/schedule', label: 'Schedule', icon: CalendarClock },
   { href: '/study-rooms', label: 'Study Rooms', icon: Users },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/gamification', label: 'Rewards', icon: Award },
@@ -58,7 +58,8 @@ export default function SidebarNav() {
               <SidebarMenuButton
                 tooltip={{ children: item.label }}
                 className={cn(
-                  pathname.startsWith(item.href || '___nevermatch___') && 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  // Check if any subItem href is a prefix of the current pathname
+                  item.subItems.some(sub => pathname.startsWith(sub.href)) && 'bg-sidebar-accent text-sidebar-accent-foreground'
                 )}
                 isActive={item.subItems.some(sub => pathname === sub.href)}
               >
@@ -73,7 +74,7 @@ export default function SidebarNav() {
                         isActive={pathname === subItem.href}
                         aria-current={pathname === subItem.href ? 'page' : undefined}
                       >
-                        <subItem.icon className="mr-2 h-4 w-4" />
+                        {subItem.icon && <subItem.icon className="mr-2 h-4 w-4" /> }
                         <span>{subItem.label}</span>
                       </SidebarMenuSubButton>
                     </Link>
