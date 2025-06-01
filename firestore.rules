@@ -1,26 +1,22 @@
-
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // User Profile Data (e.g., users/{userId}/profile/main)
-    // This rule is general for user-specific subcollections like 'profile'
+    // User Profile Data (e.g., userProfiles/{userId}, users/{userId}/profile/main)
     match /users/{userId}/profile/{profileDocId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
     // User Notes - Specific rules for notes
     match /users/{userId}/notes/{noteId} {
-      // Owner can do anything
-      allow read, write, delete: if request.auth != null && request.auth.uid == userId;
-      // For link-based sharing, the client fetches the owner's note using the owner's UID in the path.
-      // The security for reading the note relies on the above line (owner can read their own note).
-      // The /sharedNoteLinks/{linkId} rule allows resolving the link to get ownerUid and noteId.
+      // Any authenticated user can read a note if they have the path (e.g., via a share link)
+      allow read: if request.auth != null;
+      // Only the owner can write or delete
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
     }
     
     // Other user-specific collections (milestones, studyCollections, schedule, time tracking)
-    // Ensure this doesn't clash with the more specific /users/{userId}/notes/{noteId} or /users/{userId}/profile/{profileDocId}
     match /users/{userId}/{collectionId}/{docId} 
       if collectionId != 'notes' && collectionId != 'profile' {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -30,26 +26,16 @@ service cloud.firestore {
     match /userProfiles/{profileUserId} {
         allow read: if request.auth != null;
         allow create: if request.auth != null && request.auth.uid == profileUserId && request.resource.data.uid == request.auth.uid;
-        // Allow users to update their own displayName and photoURL.
-        // UID, email, and createdAt should be immutable or server-controlled.
         allow update: if request.auth != null && request.auth.uid == profileUserId
-                        && request.resource.data.uid == resource.data.uid // UID cannot change
-                        && request.resource.data.email == resource.data.email // Email cannot change
-                        && request.resource.data.createdAt == resource.data.createdAt // CreatedAt cannot change
-                        && request.resource.data.keys().hasAll(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
-                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']);
+                        && !(request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'email', 'createdAt'])); 
     }
 
     // Shared Note Links
     match /sharedNoteLinks/{linkId} {
-      // Authenticated users can read a link document to resolve it (get noteId and ownerUid)
       allow read: if request.auth != null;
-      // Only the owner of the note (whose UID is stored in the link doc) can create a link for their note
       allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-      // Only the owner of the note can delete (revoke) the link
       allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      // Updates to links are generally not needed for this simple model
-      allow update: if false;
+      allow update: if false; 
     }
 
     // System Agents (e.g., AI Helper profile)
@@ -62,21 +48,15 @@ service cloud.firestore {
     match /studyRooms/{roomId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
-      // Creator can update anything.
-      // Non-creators can update specific fields related to membership and whiteboard.
       allow update: if request.auth != null && 
                       (
                         resource.data.createdBy == request.auth.uid || 
                         (
-                          // Common scenarios for non-creators:
-                          // 1. Joining/Leaving: Modifies 'members', 'memberCount', 'updatedAt'
-                          // 2. Drawing: Modifies 'whiteboardDrawing', 'updatedAt'
-                          // 3. Combination of both is rare but allowed.
                           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt'])) ||
                           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt'])) ||
                           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt']))
                         )
-                      );          
+                      );
       allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
     }
 
@@ -84,20 +64,12 @@ service cloud.firestore {
     match /studyRooms/{roomId}/messages/{messageId} {
       allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId));
       allow create: if
-                      // Case 1: Authenticated user creating their own message
                       (request.auth != null && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
-                      // Case 2: Server/AI creating an AI message (request.auth will likely be null here or a service account)
-                      (request.resource.data.userId == 'AI_ASSISTANT' && 
-                       request.resource.data.userName == 'AI Helper'); 
-										
+                      (request.resource.data.userId == 'AI_ASSISTANT' && request.resource.data.userName == 'AI Helper'); 
       allow update: if
-                      // Case 1: Authenticated user updating their own message (and not trying to impersonate AI)
                       (request.auth != null && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
-                      // Case 2: Server/AI updating an existing AI message (e.g., "Thinking..." to actual response)
                       (resource.data.userId == 'AI_ASSISTANT' && request.resource.data.userId == 'AI_ASSISTANT' && 
                        resource.data.userName == 'AI Helper' && request.resource.data.userName == 'AI Helper');
-
-      // Delete only if user owns the message (AI messages are not user-deletable by this rule)
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid && resource.data.userName != 'AI Helper';
     }
   }
