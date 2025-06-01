@@ -8,3 +8,4 @@ import '@/ai/flows/generate-daily-tasks.ts'; // Renamed from generate-learning-s
 import '@/ai/flows/generate-weekly-outline.ts'; // Added new flow
 import '@/ai/flows/chat-assistant-flow.ts'; // Added new AI chat assistant flow
 import '@/ai/flows/summarize-chat-flow.ts'; // Added new chat summarization flow
+import '@/ai/flows/support-bot-flow.ts'; // Added new support bot flow

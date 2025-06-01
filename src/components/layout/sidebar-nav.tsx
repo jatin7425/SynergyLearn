@@ -16,7 +16,8 @@ import {
   HelpCircle,
   Award,
   CalendarClock,
-  MapPin, // Added MapPin
+  MapPin,
+  LifeBuoy, // Added LifeBuoy
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -30,7 +31,7 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/roadmap', label: 'Roadmap', icon: GitFork },
-  { href: '/progress-map', label: 'Progress Map', icon: MapPin }, // New item
+  { href: '/progress-map', label: 'Progress Map', icon: MapPin },
   { href: '/notes', label: 'Notes', icon: FileText },
   { href: '/flashcards-quizzes', label: 'Flashcards & Quizzes', icon: BookOpen },
   { href: '/schedule', label: 'Schedule', icon: CalendarClock },
@@ -43,6 +44,7 @@ const navItems = [
     subItems: [
       { href: '/ai/milestone-suggestions', label: 'Milestone Suggestions', icon: Lightbulb },
       { href: '/ai/flashcard-generator', label: 'Flashcard Generator', icon: HelpCircle },
+      { href: '/ai/support-bot', label: 'Support Bot', icon: LifeBuoy }, // New Support Bot link
     ],
   },
   { href: '/settings', label: 'Settings', icon: Settings },
