@@ -19,9 +19,15 @@ export type GenerateFlashcardsAndQuizzesInput = z.infer<
   typeof GenerateFlashcardsAndQuizzesInputSchema
 >;
 
+const QuizItemSchema = z.object({
+  question: z.string().describe('The plain text of the quiz question. No Markdown.'),
+  options: z.array(z.string()).describe('An array of 2 to 5 plain text options for the quiz question. No Markdown or prefixes like (a), (b).'),
+  correctAnswerIndex: z.number().int().min(0).describe('The 0-based index of the correct answer in the options array.'),
+});
+
 const GenerateFlashcardsAndQuizzesOutputSchema = z.object({
-  flashcards: z.array(z.string()).describe('Array of flashcard strings, each formatted as "question:::answer" in plain text.'),
-  quizzes: z.array(z.string()).describe('Array of quiz item strings, each being a block of plain text containing the question, options, and answer if applicable.')
+  flashcards: z.array(z.string()).describe('Array of flashcard strings, each formatted as "question:::answer" in plain text. No Markdown.'),
+  quizzes: z.array(QuizItemSchema).describe('Array of quiz objects, each with a question, options array, and correctAnswerIndex. All text should be plain, without Markdown.')
 });
 export type GenerateFlashcardsAndQuizzesOutput = z.infer<
   typeof GenerateFlashcardsAndQuizzesOutputSchema
@@ -48,14 +54,20 @@ const generateFlashcardsAndQuizzesPrompt = ai.definePrompt({
   - The question and answer should be in PLAIN TEXT.
   - Separate the question and answer with ":::".
   - Provide flashcards as an array of strings in the JSON output, where each string is "question:::answer".
+  - CRITICAL: Flashcard questions and answers MUST be plain text, with no Markdown formatting symbols (like *, **, #, ##, -) or list markers.
 
   For quizzes:
-  - Each quiz item should be a single block of PLAIN TEXT. This block can contain the question, any multiple-choice options (if any), and the answer.
-  - Provide quiz items as an array of plain text strings in the JSON output.
+  - Provide an array of quiz objects in the JSON output.
+  - Each quiz object MUST have the following structure:
+    {
+      "question": "The plain text of the quiz question.",
+      "options": ["Plain text for option 1", "Plain text for option 2", "Plain text for option 3", "Plain text for option 4"], // Array of 2-5 plain text strings
+      "correctAnswerIndex": 0  // 0-based integer index of the correct answer in the 'options' array
+    }
+  - CRITICAL: The 'question' string and ALL strings within the 'options' array MUST be in PLAIN TEXT.
+  - Do NOT include any Markdown formatting symbols (like *, **, #, ##, -) or list/choice markers (like (a), (b), 1., 2.) within the 'question' text or any of the 'options' text.
 
-  CRITICAL FORMATTING RULE: For all generated content (flashcard questions, flashcard answers, and the entire text for each quiz item), you MUST use PLAIN TEXT ONLY. Do NOT include any Markdown formatting symbols (like *, **, #, ##, -) or list/choice markers (like (a), (b), 1., 2.) within the text.
-
-  Return the output in JSON format according to the defined output schema.
+  Return the entire output in JSON format according to the defined output schema.
   `,
 });
 
@@ -70,4 +82,3 @@ const generateFlashcardsAndQuizzesFlow = ai.defineFlow(
     return output!;
   }
 );
-

@@ -5,10 +5,10 @@ import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, Check, FileText, Save, Info, AlertCircle } from 'lucide-react';
+import { Loader2, Zap, ChevronLeft, ChevronRight, RotateCcw, FileText, Save, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import { use, useState, useEffect, FormEvent } from 'react'; 
 import { useToast } from '@/hooks/use-toast';
-import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput } from '@/ai/flows/generate-flashcards';
+import { generateFlashcardsAndQuizzes, type GenerateFlashcardsAndQuizzesInput, type GenerateFlashcardsAndQuizzesOutput } from '@/ai/flows/generate-flashcards';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
+import { cn } from '@/lib/utils';
 
 interface Flashcard {
   id: string;
@@ -25,23 +26,11 @@ interface Flashcard {
 }
 
 interface QuizItem {
-  id: string;
+  id: string; // client-side id
   question: string;
-  options: string[]; 
-  correctAnswer: string; 
+  options: string[];
+  correctAnswerIndex: number;
 }
-
-// This type is not used for Firestore directly but for local state if needed.
-// Firestore will save raw flashcard/quiz arrays.
-// interface SavedCollection {
-//   id: string; // This would be Firestore doc ID
-//   title: string;
-//   flashcards: Flashcard[];
-//   quizzes: QuizItem[]; 
-//   createdAt: Date; // Firestore timestamp
-//   noteId?: string;
-//   noteTitle?: string;
-// }
 
 const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Promise<{content: string | null, title: string | null}> => {
   if (!userId || !noteId) return { content: null, title: null };
@@ -60,8 +49,8 @@ const fetchNoteContentFromFirebase = async (userId: string, noteId: string): Pro
 
 
 export default function GenerateFlashcardsPage(props: { params: Promise<{ id: string }> }) {
-  const resolvedParams = use(props.params); // This resolves the promise for params
-  const { id: noteId } = resolvedParams || {}; // Ensure resolvedParams is not null
+  const resolvedParams = use(props.params);
+  const { id: noteId } = resolvedParams || {}; 
   
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -77,10 +66,12 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
-  const [showAnswer, setShowAnswer] = useState(false);
-  const [showQuizAnswers, setShowQuizAnswers] = useState<Record<string, boolean>>({});
+  const [showFlashcardAnswer, setShowFlashcardAnswer] = useState(false);
 
-  // const [savedCollections, setSavedCollections] = useState<SavedCollection[]>([]); // Not needed if saving direct to Firestore
+  const [selectedQuizOptions, setSelectedQuizOptions] = useState<Record<string, number>>({}); // quiz.id -> option_index
+  const [revealedQuizAnswers, setRevealedQuizAnswers] = useState<Record<string, boolean>>({}); // quiz.id -> true/false
+
+
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [collectionTitle, setCollectionTitle] = useState('');
 
@@ -101,10 +92,12 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
           toast({ title: "Note content not found", description:"Could not load content for this note.", variant: "destructive" });
         }
         setOriginalNoteTitle(title || 'Note ' + noteId);
+        setCollectionTitle(title ? `${title} - Study Set` : 'New Study Set');
         setIsLoadingNote(false);
       });
-    } else if (!noteId) { // If accessed directly via /ai/flashcard-generator (no noteId)
+    } else if (!noteId) { 
         setOriginalNoteTitle('Custom Text Input'); 
+        setCollectionTitle('New Study Set');
         setIsLoadingNote(false);
     }
   }, [noteId, user, authLoading, toast, router, pathname]);
@@ -118,10 +111,12 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
     setIsLoadingAI(true);
     setFlashcards([]);
     setQuizzes([]);
-    setShowQuizAnswers({});
+    setSelectedQuizOptions({});
+    setRevealedQuizAnswers({});
+
     try {
       const input: GenerateFlashcardsAndQuizzesInput = { notes: noteContent };
-      const result = await generateFlashcardsAndQuizzes(input);
+      const result: GenerateFlashcardsAndQuizzesOutput = await generateFlashcardsAndQuizzes(input);
       
       const parsedFlashcards = result.flashcards.map((fcString, index) => {
         const parts = fcString.split(':::');
@@ -133,18 +128,19 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
       });
       setFlashcards(parsedFlashcards);
 
-      const parsedQuizzes = result.quizzes.map((qString, index) => ({
+      const parsedQuizzes = result.quizzes.map((qData, index) => ({
+        ...qData,
         id: `q-${Date.now()}-${index}`,
-        question: qString,
-        // AI currently doesn't provide structured options/answers for quizzes
-        options: ["Option A (placeholder)", "Option B (placeholder)", "Option C (placeholder)", "Option D (placeholder)"], 
-        correctAnswer: "Placeholder Correct Answer" 
       }));
-      setQuizzes(parsedQuizzes);
+      setQuizzes(parsedQuizzes as QuizItem[]); // Cast as AI output should match this structure
 
       setCurrentFlashcardIndex(0);
-      setShowAnswer(false);
-      setCollectionTitle(originalNoteTitle ? `${originalNoteTitle} - Study Set` : 'New Study Set');
+      setShowFlashcardAnswer(false);
+      if (!collectionTitle && originalNoteTitle) {
+        setCollectionTitle(`${originalNoteTitle} - Study Set`);
+      } else if (!collectionTitle) {
+        setCollectionTitle('New Study Set ' + new Date().toLocaleTimeString());
+      }
       toast({ title: "Generation Complete!", description: "Flashcards and quizzes are ready." });
     } catch (error) {
       console.error('Error generating content:', error);
@@ -155,17 +151,21 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
   };
 
   const nextFlashcard = () => {
-    setShowAnswer(false);
+    setShowFlashcardAnswer(false);
     setCurrentFlashcardIndex((prev) => (prev + 1) % flashcards.length);
   };
 
   const prevFlashcard = () => {
-    setShowAnswer(false);
+    setShowFlashcardAnswer(false);
     setCurrentFlashcardIndex((prev) => (prev - 1 + flashcards.length) % flashcards.length);
   };
 
-  const toggleQuizAnswer = (quizId: string) => {
-    setShowQuizAnswers(prev => ({ ...prev, [quizId]: !prev[quizId] }));
+  const handleSelectQuizOption = (quizId: string, optionIndex: number) => {
+    setSelectedQuizOptions(prev => ({ ...prev, [quizId]: optionIndex }));
+  };
+
+  const revealQuizAnswer = (quizId: string) => {
+    setRevealedQuizAnswers(prev => ({ ...prev, [quizId]: true }));
   };
 
   const handleSaveCollection = async (e: FormEvent) => {
@@ -183,11 +183,15 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         return;
     }
     setIsSavingCollection(true);
+    // Map quizzes to only store AI-generated data, not client-side state
+    const quizzesToSave = quizzes.map(({id, ...q}) => q);
+
     const collectionData = {
         title: collectionTitle.trim(),
-        flashcards,
-        quizzes,
+        flashcards: flashcards.map(({id, ...f}) => f), // Remove client-side ID before saving
+        quizzes: quizzesToSave,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         ...(noteId && { sourceNoteId: noteId }),
         ...(noteId && originalNoteTitle && { sourceNoteTitle: originalNoteTitle }),
     };
@@ -195,11 +199,8 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         const collectionsRef = collection(db, 'users', user.uid, 'studyCollections');
         await addDoc(collectionsRef, collectionData);
         toast({ title: "Collection Saved!", description: `"${collectionTitle}" has been saved to your collections.`});
-        setCollectionTitle('');
+        // Do not clear collectionTitle here, user might want to save another version
         setShowSaveDialog(false);
-        // Optionally clear generated content or redirect
-        // setFlashcards([]); 
-        // setQuizzes([]);
     } catch (error) {
         console.error("Error saving collection: ", error);
         toast({ title: "Save Failed", description: (error as Error).message, variant: "destructive"});
@@ -275,10 +276,10 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
           <CardContent className="text-center">
             <div className="min-h-[150px] md:min-h-[200px] p-4 md:p-6 border rounded-lg bg-card flex flex-col justify-center items-center relative shadow-inner">
               <p className="text-md md:text-lg font-semibold mb-2 md:mb-4">{flashcards[currentFlashcardIndex]?.question}</p>
-              {showAnswer && <p className="text-sm md:text-md text-primary">{flashcards[currentFlashcardIndex]?.answer}</p>}
+              {showFlashcardAnswer && <p className="text-sm md:text-md text-primary">{flashcards[currentFlashcardIndex]?.answer}</p>}
             </div>
-            <Button onClick={() => setShowAnswer(!showAnswer)} variant="outline" className="my-3 md:my-4">
-              <RotateCcw className="mr-2 h-4 w-4" /> {showAnswer ? 'Hide' : 'Show'} Answer
+            <Button onClick={() => setShowFlashcardAnswer(!showFlashcardAnswer)} variant="outline" className="my-3 md:my-4">
+              <RotateCcw className="mr-2 h-4 w-4" /> {showFlashcardAnswer ? 'Hide' : 'Show'} Answer
             </Button>
             <div className="flex justify-center gap-3 md:gap-4 mt-1 md:mt-2">
               <Button onClick={prevFlashcard} variant="outline" size="icon" disabled={flashcards.length <= 1}>
@@ -297,23 +298,52 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
         <Card>
           <CardHeader>
             <CardTitle>Quizzes</CardTitle>
-            <CardDescription>Test your knowledge with these questions. Full MCQ functionality depends on AI providing options/answers.</CardDescription>
+            <CardDescription>Test your knowledge with these questions.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 md:space-y-4">
+          <CardContent className="space-y-4 md:space-y-6">
             {quizzes.map((quiz, index) => (
               <Card key={quiz.id} className="p-3 md:p-4 bg-card shadow-sm">
-                <p className="font-semibold text-sm md:text-base">Q{index + 1}: {quiz.question}</p>
-                <div className="mt-2 space-y-1">
-                  {quiz.options?.map(opt => (
-                     <Button key={opt} variant="outline" className="w-full justify-start text-left text-xs md:text-sm cursor-not-allowed opacity-70" onClick={() => alert(`Selecting options is not fully implemented without structured AI output.`)}>
-                       {opt}
-                     </Button>
-                  ))}
+                <p className="font-semibold text-sm md:text-base mb-3">Q{index + 1}: {quiz.question}</p>
+                <div className="space-y-2">
+                  {quiz.options.map((option, optionIndex) => {
+                    const isSelected = selectedQuizOptions[quiz.id] === optionIndex;
+                    const isRevealed = revealedQuizAnswers[quiz.id];
+                    const isCorrect = quiz.correctAnswerIndex === optionIndex;
+                    
+                    return (
+                      <Button
+                        key={optionIndex}
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left text-xs md:text-sm h-auto py-2",
+                          isSelected && !isRevealed && "ring-2 ring-primary",
+                          isRevealed && isCorrect && "bg-green-100 dark:bg-green-800 border-green-500 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-700",
+                          isRevealed && !isCorrect && isSelected && "bg-red-100 dark:bg-red-800 border-red-500 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-700"
+                        )}
+                        onClick={() => !isRevealed && handleSelectQuizOption(quiz.id, optionIndex)}
+                        disabled={isRevealed}
+                      >
+                        {isRevealed && isCorrect && <CheckCircle className="mr-2 h-4 w-4 text-green-600 dark:text-green-400" />}
+                        {isRevealed && !isCorrect && isSelected && <XCircle className="mr-2 h-4 w-4 text-red-600 dark:text-red-400" />}
+                        {option}
+                      </Button>
+                    );
+                  })}
                 </div>
-                <Button variant="link" size="sm" className="mt-2 text-xs md:text-sm" onClick={() => toggleQuizAnswer(quiz.id)}>
-                    {showQuizAnswers[quiz.id] ? 'Hide' : 'Show'} Answer (Placeholder)
+                <Button 
+                  variant="link" 
+                  size="sm" 
+                  className="mt-3 text-xs md:text-sm" 
+                  onClick={() => revealQuizAnswer(quiz.id)}
+                  disabled={revealedQuizAnswers[quiz.id]}
+                >
+                  {revealedQuizAnswers[quiz.id] ? 'Answer Shown' : 'Show Answer'}
                 </Button>
-                {showQuizAnswers[quiz.id] && <p className="text-xs md:text-sm text-primary mt-1">{quiz.correctAnswer}</p>}
+                {revealedQuizAnswers[quiz.id] && (
+                  <p className="text-xs md:text-sm text-primary mt-1">
+                    Correct Answer: {quiz.options[quiz.correctAnswerIndex]}
+                  </p>
+                )}
               </Card>
             ))}
           </CardContent>
@@ -323,7 +353,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
        {(flashcards.length > 0 || quizzes.length > 0) && (
         <Card>
           <CardHeader>
-            <CardTitle>Save & Export</CardTitle>
+            <CardTitle>Save Collection</CardTitle>
           </CardHeader>
           <CardContent>
             <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
@@ -354,7 +384,7 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
                     <DialogClose asChild>
                       <Button type="button" variant="outline" disabled={isSavingCollection}>Cancel</Button>
                     </DialogClose>
-                    <Button type="submit" disabled={isSavingCollection}>
+                    <Button type="submit" disabled={isSavingCollection || !collectionTitle.trim()}>
                        {isSavingCollection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                        Save
                     </Button>
@@ -362,15 +392,9 @@ export default function GenerateFlashcardsPage(props: { params: Promise<{ id: st
                 </form>
               </DialogContent>
             </Dialog>
-            {/* Placeholder for Export buttons */}
-            {/* <Button variant="outline" className="w-full mt-2" onClick={() => toast({title: "Not Implemented"})}>Export Flashcards (CSV)</Button> */}
           </CardContent>
         </Card>
       )}
-
-      {/* Removed local savedCollections display as we now save to Firestore */}
     </div>
   );
 }
-
-    
