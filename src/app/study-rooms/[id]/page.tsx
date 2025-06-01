@@ -140,6 +140,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null); // Define the ref
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionPopupRef = useRef<HTMLDivElement>(null);
 
@@ -193,15 +194,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         setRoomData(data);
         setWhiteboardPaths(data.whiteboardDrawing || []);
         
-        // Dynamically set canvas background color for eraser based on current theme
         const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
-        // cardBg will be like "0 0% 100%" for light theme (white), or "0 0% 16%" for dark (dark gray)
-        // convert HSL string to actual HSL for canvas
         const hslMatch = cardBg.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
         if (hslMatch) {
           setCanvasBgColor(`hsl(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%)`);
         } else {
-          setCanvasBgColor('white'); // Fallback
+          setCanvasBgColor('white'); 
         }
 
       } else {
@@ -235,7 +233,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   useEffect(() => {
     if (messagesEndRef.current) {
-      // Use setTimeout to ensure DOM updates are flushed before scrolling
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
     }
   }, [messages]);
@@ -427,15 +424,11 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     
     const isCreator = roomData.createdBy === currentUserProfile.uid;
     
-    // If user is not the creator, they can just navigate away without DB changes for members list
-    // Or, if we want to track active members, we'd still remove them.
-    // For simplicity, let's always try to remove member if they are in the list.
-    
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     
     if (memberToRemove) {
         const roomDocRef = doc(db, 'studyRooms', roomId);
-        const roomUpdateData: any = { // Use any for flexibility with serverTimestamp
+        const roomUpdateData: any = { 
             members: arrayRemove(memberToRemove),
             memberCount: Math.max(0, (roomData.memberCount || 1) - 1),
             updatedAt: serverTimestamp()
@@ -444,7 +437,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             await updateDoc(roomDocRef, roomUpdateData);
         } catch (error) {
             console.error("Error updating members list on leave: ", error);
-            // Proceed to navigate away even if DB update fails for non-creators
         }
     }
 
@@ -595,7 +587,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                 </div>
             </CardHeader>
             <CardContent className="flex-grow p-0 m-0 relative overflow-hidden">
-               {/* This div will define the drawing area size for the canvas */}
                <div className="w-full h-full bg-card"> 
                 <WhiteboardCanvas
                     paths={whiteboardPaths}
@@ -603,7 +594,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                     activeColor={activeColor}
                     activeStrokeWidth={activeStrokeWidth}
                     activeTool={activeTool}
-                    canvasBackgroundColorCssVar="--card" // Use CSS variable for card background
+                    canvasBackgroundColorCssVar="--card" 
                 />
                </div>
             </CardContent>
@@ -611,14 +602,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </TabsContent>
 
         <TabsContent value="chat" className="flex-grow flex flex-col m-0 overflow-hidden">
-           <Card className="flex flex-col flex-grow overflow-hidden max-h-[75vh]"> {/* max-h applied here */}
+           <Card className="flex flex-col flex-grow overflow-hidden max-h-[75vh]">
             <CardHeader className="sticky top-0 bg-background z-10 py-3 px-4 flex-shrink-0 border-b">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-grow min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
-                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
-                    <div className="p-2 md:p-4 space-y-4"> {/* Padding inside scrollable */}
+            <div className="flex-1 min-h-0 relative border-t border-b">
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto"> 
+                    <div className="p-2 md:p-4 space-y-4">
                         {messages.map((msg) => {
                         const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
                         const isAIMessage = msg.userId === AI_USER_ID;
