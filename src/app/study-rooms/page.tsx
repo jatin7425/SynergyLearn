@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
+import type { FirebaseError } from 'firebase/app';
 
 interface StudyRoom {
   id: string; // Firestore document ID
@@ -91,17 +92,20 @@ export default function StudyRoomsPage() {
     const trimmedName = newRoomName.trim();
     const trimmedTopic = newRoomTopic.trim();
 
-    if (!trimmedName || !trimmedTopic) {
-      toast({ title: "Missing Information", description: "Please provide a name and topic for the room.", variant: "destructive"});
+    if (!trimmedName) {
+      toast({ title: "Room Name Required", description: "Please enter a name for the room.", variant: "destructive"});
       return;
     }
-
     if (trimmedName.length > MAX_ROOM_NAME_LENGTH) {
-      toast({ title: "Room Name Too Long", description: `Room name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters. Current: ${trimmedName.length}`, variant: "destructive"});
+      toast({ title: "Room Name Too Long", description: `Name must be less than ${MAX_ROOM_NAME_LENGTH + 1} characters. Current: ${trimmedName.length}`, variant: "destructive"});
+      return;
+    }
+    if (!trimmedTopic) {
+      toast({ title: "Room Topic Required", description: "Please enter a topic for the room.", variant: "destructive"});
       return;
     }
     if (trimmedTopic.length > MAX_ROOM_TOPIC_LENGTH) {
-      toast({ title: "Room Topic Too Long", description: `Room topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters. Current: ${trimmedTopic.length}`, variant: "destructive"});
+      toast({ title: "Room Topic Too Long", description: `Topic must be less than ${MAX_ROOM_TOPIC_LENGTH + 1} characters. Current: ${trimmedTopic.length}`, variant: "destructive"});
       return;
     }
 
@@ -124,8 +128,26 @@ export default function StudyRoomsPage() {
       setShowCreateRoomDialog(false);
       router.push(`/study-rooms/${docRef.id}`); 
     } catch (error) {
-      console.error("Error creating room: ", error);
-      toast({ title: "Creation Failed", description: (error as Error).message, variant: "destructive" });
+      const firebaseError = error as FirebaseError;
+      console.error("Error creating room: ", firebaseError);
+      if (firebaseError.code && (firebaseError.code === 'permission-denied' || firebaseError.code === 'PERMISSION_DENIED')) {
+        console.error("Data sent during failed room creation attempt:", JSON.stringify(newRoomData, (key, value) => {
+          // Firestore serverTimestamp is an object, stringify it for logging
+          if (value && typeof value === 'object' && value.hasOwnProperty('nanoseconds') && value.hasOwnProperty('seconds')) {
+            return `Timestamp(seconds=${value.seconds}, nanoseconds=${value.nanoseconds})`;
+          }
+          if (key === 'createdAt' || key === 'updatedAt') return "FieldValue.serverTimestamp()"; // Indicate it was a server timestamp
+          return value;
+        }, 2));
+        toast({ 
+          title: "Creation Failed: Permissions", 
+          description: "Could not create room due to permission issues. Please check browser console for data details to help debug with Firestore Rules Playground. Ensure all input fields meet requirements (e.g., length).", 
+          variant: "destructive",
+          duration: 10000 
+        });
+      } else {
+        toast({ title: "Creation Failed", description: firebaseError.message, variant: "destructive" });
+      }
     } finally {
       setIsCreatingRoom(false);
     }
