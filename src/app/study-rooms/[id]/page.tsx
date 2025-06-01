@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation } from 'lucide-react';
+import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot } from 'lucide-react';
 import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
@@ -16,6 +16,9 @@ import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
+import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
+import { cn } from '@/lib/utils';
+
 
 interface Member {
   uid: string;
@@ -42,6 +45,10 @@ interface Message {
   timestamp: Timestamp | null;
 }
 
+const AI_USER_ID = 'AI_ASSISTANT';
+const AI_USER_NAME = 'AI Helper';
+const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI'; // Using accent color
+
 export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) {
   const resolvedParams = use(props.params);
   const { id: roomId } = resolvedParams || {};
@@ -58,10 +65,8 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const chatScrollAreaRef = useRef<HTMLDivElement>(null);
 
-
   const currentUserProfile = useMemo(() => {
     if (!user) return null;
-    // Ensure stable parts of user are used for dependencies
     return {
       uid: user.uid,
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
@@ -78,29 +83,23 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       return;
     }
 
-    if (!currentUserProfile && !authLoading) { // Added guard for currentUserProfile here
-        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false. User might not be fully available yet.");
+    if (!currentUserProfile && !authLoading) {
+        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
         setIsLoadingRoom(false); 
-        // Redirect if user object isn't available after auth loading completes
-        if (!user) { // Double check actual user object from context
+        if (!user) {
            router.push(`/login?redirect=${pathname}`);
         }
         return;
     }
     
     setIsLoadingRoom(true);
-    console.log(`Fetching room data for roomId: ${roomId}`);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
-    // Fetch main room data once
     getDoc(roomDocRef).then((docSnap) => {
       if (docSnap.exists()) {
-        const fetchedRoomData = { id: docSnap.id, ...docSnap.data() } as RoomData;
-        setRoomData(fetchedRoomData);
-        console.log(`Room data for ${roomId} fetched successfully.`);
+        setRoomData({ id: docSnap.id, ...docSnap.data() } as RoomData);
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
-        console.error(`Room ${roomId} not found in Firestore.`);
         router.push('/study-rooms');
       }
       setIsLoadingRoom(false);
@@ -111,22 +110,18 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       setIsLoadingRoom(false);
     });
 
-    // Setup snapshot listener for messages
-    console.log(`Setting up Firestore onSnapshot listener for messages in room ${roomId}`);
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
-        console.log(`Firestore onSnapshot for messages in room ${roomId} received data. Document count: ${snapshot.docs.length}`);
         const fetchedMessages: Message[] = [];
         snapshot.forEach(doc => fetchedMessages.push({ id: doc.id, ...doc.data() } as Message));
         setMessages(fetchedMessages);
     }, (error) => {
         console.error(`Firestore onSnapshot error for messages in room ${roomId}: `, error);
-        toast({ title: "Error", description: "Could not load messages. Check Firestore indexes for messages (timestamp asc).", variant: "destructive" });
+        toast({ title: "Error", description: "Could not load messages.", variant: "destructive" });
     });
 
     return () => {
-      console.log(`Unsubscribing from messages listener for room ${roomId}`);
       unsubscribeMessages();
     };
   }, [roomId, authLoading, currentUserProfile, router, pathname, toast, user]); 
@@ -145,18 +140,62 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     e.preventDefault();
     if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage || !roomData) return;
 
+    const trimmedMessage = newMessage.trim();
     setIsSendingMessage(true);
-    const messageData = {
+    setNewMessage(''); 
+
+    const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
+
+    // Save the user's message
+    const userMessageData = {
       userId: currentUserProfile.uid,
       userName: currentUserProfile.name,
       userAvatar: currentUserProfile.avatar,
-      text: newMessage.trim(),
+      text: trimmedMessage,
       timestamp: serverTimestamp()
     };
+
     try {
-      const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
-      await addDoc(messagesColRef, messageData);
-      setNewMessage('');
+      await addDoc(messagesColRef, userMessageData);
+
+      // Check for AI trigger: @help_me
+      if (trimmedMessage.toLowerCase().startsWith('@help_me')) {
+        const aiQuery = trimmedMessage.substring('@help_me'.length).trim();
+
+        if (aiQuery) {
+          try {
+            const aiResult = await getAIChatResponse({ userQuery: aiQuery });
+            const aiResponseMessageData = {
+              userId: AI_USER_ID,
+              userName: AI_USER_NAME,
+              userAvatar: AI_AVATAR_URL,
+              text: aiResult.aiResponse,
+              timestamp: serverTimestamp()
+            };
+            await addDoc(messagesColRef, aiResponseMessageData);
+          } catch (aiError) {
+            console.error("Error getting AI response:", aiError);
+            const aiErrorMessageData = {
+              userId: AI_USER_ID,
+              userName: AI_USER_NAME,
+              userAvatar: AI_AVATAR_URL,
+              text: "Sorry, I had trouble processing that. Please try again or rephrase your question.",
+              timestamp: serverTimestamp()
+            };
+            await addDoc(messagesColRef, aiErrorMessageData);
+          }
+        } else {
+          // User typed "@help_me" but nothing else
+          const helpMessageData = {
+              userId: AI_USER_ID,
+              userName: AI_USER_NAME,
+              userAvatar: AI_AVATAR_URL,
+              text: "How can I help you? Please type your question after '@help_me'.",
+              timestamp: serverTimestamp()
+          };
+          await addDoc(messagesColRef, helpMessageData);
+        }
+      }
     } catch (error) {
       const firebaseError = error as FirebaseError;
       console.error("Error sending message: ", firebaseError);
@@ -166,23 +205,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
           `\n>>> USE THE DATA PAYLOAD BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
           `\nAttempted message data:`,
-          JSON.stringify(messageData, (key, value) => {
-            if (value && typeof value === 'object') {
-              if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
-                return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
-              }
-              if (typeof (value as any)._methodName === 'string' && (value as any)._methodName.includes('timestamp')) {
-                return { _methodName: (value as any)._methodName };
-              }
-            }
-            return value;
-          }, 2)
+          JSON.stringify(userMessageData, null, 2) // Log the data that failed
         );
          toast({
           title: "Error Sending Message: Permissions",
-          description: "Could not send message due to security rule denial. Check browser console for data details.",
+          description: "Could not send message. Check Firestore security rules.",
           variant: "destructive",
-          duration: 15000
+          duration: 10000
         });
       } else {
         toast({ title: "Error Sending Message", description: firebaseError.message, variant: "destructive"});
@@ -195,23 +224,25 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
     
-    if (currentUserProfile.uid !== roomData.createdBy) {
+    const isCreator = roomData.createdBy === currentUserProfile.uid;
+    
+    if (!isCreator) {
         toast({ title: "Navigating Away", description: `You have left ${roomData.name}.`});
         router.push('/study-rooms');
         return;
     }
-
-    const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
-    if (!memberToRemove && roomData.createdBy === currentUserProfile.uid) {
-        // If creator is leaving and not in members list for some reason, just proceed
-        console.warn("Creator leaving room but not found in members list. Proceeding with room data update if needed.");
-    }
     
-    const roomUpdateData = {
-        members: memberToRemove ? arrayRemove(memberToRemove) : roomData.members, // Keep existing members if memberToRemove is not found
-        memberCount: memberToRemove ? Math.max(0, (roomData.memberCount || 1) - 1) : roomData.memberCount,
+    // If creator is leaving, they might still be in the members list if added manually or by old logic
+    const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
+    
+    const roomUpdateData: Partial<RoomData> = {
         updatedAt: serverTimestamp()
     };
+
+    if (memberToRemove) {
+        roomUpdateData.members = arrayRemove(memberToRemove);
+        roomUpdateData.memberCount = Math.max(0, (roomData.memberCount || 1) - 1);
+    }
 
     try {
         const roomDocRef = doc(db, 'studyRooms', roomId);
@@ -279,14 +310,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               )}
             </div>
             <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData?.memberCount || 0} Members</Button>
-            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator && !!roomData && roomData.createdBy !== currentUserProfile?.uid} title={(!isRoomCreator && roomData && roomData.createdBy !== currentUserProfile?.uid) ? "Only room creator can modify member list" : "Leave Room"}>
+            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator}>
               <LogOut className="mr-2 h-4 w-4" /> Leave
             </Button>
           </div>
         }
       />
 
-      <Tabs defaultValue="whiteboard" className="flex-grow flex flex-col mt-4 overflow-hidden">
+      <Tabs defaultValue="chat" className="flex-grow flex flex-col mt-4 overflow-hidden">
         <TabsList className="grid w-full grid-cols-2 mb-4">
           <TabsTrigger value="whiteboard">Whiteboard</TabsTrigger>
           <TabsTrigger value="chat">Chat</TabsTrigger>
@@ -315,31 +346,44 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             </CardHeader>
             <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={chatScrollAreaRef}>
               <div className="space-y-4">
-                {messages.map((msg) => (
-                  <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUserProfile?.uid ? 'justify-end' : 'justify-start'}`}>
-                    {msg.userId !== currentUserProfile?.uid && (
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'A'}</AvatarFallback>
-                      </Avatar>
-                    )}
-                    <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-card border rounded-bl-none'}`}>
-                      <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                          <span className={`text-xs ml-1 font-normal ${msg.userId === currentUserProfile?.uid ? 'text-primary-foreground/80' : 'text-muted-foreground/80'}`}>
-                              {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
-                          </span>
-                      </p>
-                      <p className="text-sm break-words">{msg.text}</p>
+                {messages.map((msg) => {
+                  const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
+                  const isAIMessage = msg.userId === AI_USER_ID;
+                  return (
+                    <div key={msg.id} className={`flex items-end gap-2 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}>
+                      {!isCurrentUserMessage && (
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={isAIMessage ? AI_AVATAR_URL : (msg.userAvatar || 'https://placehold.co/40x40.png')} data-ai-hint={isAIMessage ? "robot bot" : "user avatar"} />
+                          <AvatarFallback>{isAIMessage ? 'AI' : (msg.userName?.substring(0,1).toUpperCase() || 'A')}</AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div className={cn(
+                        "max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm",
+                        isCurrentUserMessage ? 'bg-primary text-primary-foreground rounded-br-none' 
+                        : isAIMessage ? 'bg-accent/30 border border-accent/50 rounded-bl-none' 
+                        : 'bg-card border rounded-bl-none'
+                      )}>
+                        <p className="text-xs font-semibold mb-0.5">{msg.userName}
+                            <span className={cn("text-xs ml-1 font-normal", 
+                                isCurrentUserMessage ? 'text-primary-foreground/80' 
+                                : isAIMessage ? 'text-accent-foreground/80 dark:text-accent-foreground/70'
+                                : 'text-muted-foreground/80'
+                            )}>
+                                {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
+                            </span>
+                        </p>
+                        <p className="text-sm break-words">{msg.text}</p>
+                      </div>
+                       {isCurrentUserMessage && (
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
+                          <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
+                        </Avatar>
+                      )}
                     </div>
-                     {msg.userId === currentUserProfile?.uid && (
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={msg.userAvatar || 'https://placehold.co/40x40.png'} data-ai-hint="user avatar" />
-                        <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'U'}</AvatarFallback>
-                      </Avatar>
-                    )}
-                  </div>
-                ))}
-                 {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation!</p>}
+                  );
+                })}
+                 {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
               </div>
             </ScrollArea>
             <CardContent className="pt-2 md:pt-4 pb-2">
@@ -347,7 +391,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                 <Input
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Type a message..."
+                  placeholder="Type a message, or @help_me for AI..."
                   className="flex-grow"
                   disabled={!currentUserProfile || isSendingMessage}
                 />
