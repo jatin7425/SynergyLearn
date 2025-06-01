@@ -27,16 +27,34 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 
+interface Member {
+  uid: string;
+  name: string;
+  avatar?: string;
+  joinedAt: Timestamp;
+}
+
 interface StudyRoom {
   id: string; // Firestore document ID
   name: string;
   topic: string;
   memberCount: number;
-  members: { uid: string; name: string; avatar?: string; joinedAt: Timestamp }[];
+  members: Member[];
   createdBy: string; // User UID
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+  whiteboardDrawing?: WhiteboardPath[]; // Added for whiteboard
 }
+
+// Define WhiteboardPath if not already globally available, or import
+interface WhiteboardPath {
+  id: string;
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  strokeWidth: number;
+  tool: 'pen' | 'eraser';
+}
+
 
 const MAX_ROOM_NAME_LENGTH = 99;
 const MAX_ROOM_TOPIC_LENGTH = 199;
@@ -114,11 +132,17 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 0,
-      members: [], 
+      memberCount: 1, 
+      members: [{ 
+          uid: user.uid,
+          name: user.displayName || user.email?.split('@')[0] || 'Anonymous User',
+          avatar: user.photoURL || `https://placehold.co/40x40.png&text=${(user.displayName || user.email?.split('@')[0] || 'A').substring(0,1).toUpperCase()}`,
+          joinedAt: serverTimestamp() as Timestamp 
+      }],
       createdBy: user.uid, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      whiteboardDrawing: [], // Initialize whiteboard data
     };
 
     try {

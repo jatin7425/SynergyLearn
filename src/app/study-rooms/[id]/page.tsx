@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot } from 'lucide-react';
-import React, { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
+import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical } from 'lucide-react';
+import React, { useState, useEffect, use, FormEvent, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -17,6 +17,8 @@ import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, qu
 import type { FirebaseError } from 'firebase/app';
 import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
 import { cn } from '@/lib/utils';
+import WhiteboardCanvas, { type WhiteboardPath } from '@/components/study-rooms/WhiteboardCanvas'; // Import Whiteboard
+import { Separator } from '@/components/ui/separator';
 
 
 interface Member {
@@ -34,6 +36,7 @@ interface RoomData {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+  whiteboardDrawing?: WhiteboardPath[]; // For whiteboard data
 }
 interface Message {
   id:string;
@@ -59,7 +62,7 @@ const aiHelpSuggestionItem: AISuggestionType = {
   name: AI_MENTION_NAME, 
   displayName: `AI Helper (@${AI_MENTION_NAME})`, 
   type: 'ai',
-  avatar: AI_AVATAR_URL // Can use the AI avatar here or a specific icon
+  avatar: AI_AVATAR_URL 
 };
 
 
@@ -136,7 +139,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionPopupRef = useRef<HTMLDivElement>(null);
@@ -145,13 +147,22 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
 
+  // Whiteboard state
+  const [whiteboardPaths, setWhiteboardPaths] = useState<WhiteboardPath[]>([]);
+  const [activeTool, setActiveTool] = useState<'pen' | 'eraser'>('pen');
+  const [activeColor, setActiveColor] = useState('#000000'); // Default black
+  const [activeStrokeWidth, setActiveStrokeWidth] = useState(3);
+  const [canvasBgColor, setCanvasBgColor] = useState('hsl(var(--card))'); // Default to card background for eraser
+
+  const predefinedColors = ['#000000', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#FFA500']; // Black, Red, Blue, Green, Yellow, Orange
+  const strokeWidths = [1, 3, 5, 8, 12];
 
   const currentUserProfile = useMemo(() => {
     if (!user) return null;
     return {
       uid: user.uid,
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
-      avatar: user.photoURL || `https://placehold.co/40x40.png`
+      avatar: user.photoURL || `https://placehold.co/40x40.png&text=${(user.displayName || user.email?.split('@')[0] || 'A').substring(0,1).toUpperCase()}`
     };
   }, [user]);
 
@@ -176,15 +187,29 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     setIsLoadingRoom(true);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
-    getDoc(roomDocRef).then((docSnap) => {
+    const unsubscribeRoom = onSnapshot(roomDocRef, (docSnap) => {
       if (docSnap.exists()) {
-        setRoomData({ id: docSnap.id, ...docSnap.data() } as RoomData);
+        const data = { id: docSnap.id, ...docSnap.data() } as RoomData;
+        setRoomData(data);
+        setWhiteboardPaths(data.whiteboardDrawing || []);
+        
+        // Dynamically set canvas background color for eraser based on current theme
+        const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
+        // cardBg will be like "0 0% 100%" for light theme (white), or "0 0% 16%" for dark (dark gray)
+        // convert HSL string to actual HSL for canvas
+        const hslMatch = cardBg.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
+        if (hslMatch) {
+          setCanvasBgColor(`hsl(${hslMatch[1]}, ${hslMatch[2]}%, ${hslMatch[3]}%)`);
+        } else {
+          setCanvasBgColor('white'); // Fallback
+        }
+
       } else {
         toast({ title: "Room Not Found", variant: "destructive" });
         router.push('/study-rooms');
       }
       setIsLoadingRoom(false);
-    }).catch(error => {
+    }, (error) => {
       console.error(`Error fetching room data for ${roomId}: `, error);
       toast({ title: "Error", description: "Could not load room data.", variant: "destructive" });
       router.push('/study-rooms');
@@ -203,13 +228,15 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     });
 
     return () => {
+      unsubscribeRoom();
       unsubscribeMessages();
     };
   }, [roomId, authLoading, currentUserProfile, router, pathname, toast, user]); 
 
   useEffect(() => {
     if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+      // Use setTimeout to ensure DOM updates are flushed before scrolling
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
     }
   }, [messages]);
 
@@ -221,12 +248,12 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     const words = value.split(' ');
     const lastWord = words[words.length - 1];
   
-    if (lastWord.startsWith(MENTION_TRIGGER) && lastWord.length > 0) { // Check for @ and some text after it
-      const query = lastWord.substring(1); // Text after @
+    if (lastWord.startsWith(MENTION_TRIGGER) && lastWord.length > 0) { 
+      const query = lastWord.substring(1); 
   
-      if (query.length > 0 || lastWord === MENTION_TRIGGER) { // Show suggestions if query exists OR if it's just "@"
+      if (query.length > 0 || lastWord === MENTION_TRIGGER) { 
         const memberSugs: UserSuggestionType[] = roomData?.members
-          .filter(member => member.name.toLowerCase().includes(query.toLowerCase()) || query === '') // Include all if query is empty (just "@")
+          .filter(member => member.name.toLowerCase().includes(query.toLowerCase()) || query === '') 
           .map(member => ({ ...member, type: 'member' as const })) || [];
         
         let allSugs: MentionSuggestion[] = [];
@@ -235,17 +262,16 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         }
         allSugs = [...allSugs, ...memberSugs];
         
-        // Simple deduplication by name in case AI name clashes with a user (unlikely for 'help_me')
         const uniqueSuggestions = Array.from(new Map(allSugs.map(item => [item.name, item])).values());
 
         if (uniqueSuggestions.length > 0) {
-          setMentionSuggestions(uniqueSuggestions.slice(0, 7)); // Limit suggestions
+          setMentionSuggestions(uniqueSuggestions.slice(0, 7)); 
           setShowMentionSuggestions(true);
           setActiveSuggestionIndex(0);
         } else {
           setShowMentionSuggestions(false);
         }
-      } else { // Case where it's just "@" and nothing else, or invalid query
+      } else { 
         setShowMentionSuggestions(false);
       }
     } else {
@@ -255,13 +281,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   
   const handleSelectSuggestion = (suggestion: MentionSuggestion) => {
     const words = newMessage.split(' ');
-    words.pop(); // Remove the current @query word
+    words.pop(); 
   
-    const mentionText = `@${suggestion.name} `; // Add a space after selection
+    const mentionText = `@${suggestion.name} `; 
     setNewMessage(words.join(' ') + (words.length > 0 ? ' ' : '') + mentionText);
     
     setShowMentionSuggestions(false);
-    setTimeout(() => inputRef.current?.focus(), 0); // Ensure focus happens after state update
+    setTimeout(() => inputRef.current?.focus(), 0); 
   };
   
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -282,7 +308,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         setShowMentionSuggestions(false);
       }
     }
-    // Form submission is handled by onSubmit of the form, not directly by Enter here unless suggestions are not shown.
   };
 
   useEffect(() => {
@@ -310,12 +335,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
-    // If suggestions are shown and Enter was pressed, it should have been handled by handleInputKeyDown to select suggestion.
-    // This means if handleSendMessage is called by form submit, we proceed to send the message.
     if (showMentionSuggestions && mentionSuggestions.length > 0) {
-        // If user pressed Enter and suggestions were visible, they might have intended to select.
-        // However, if they clicked the send button, we send.
-        // For simplicity, if suggestions are visible and this function is called, assume user confirmed sending the current text.
     }
 
     if (!currentUserProfile || newMessage.trim() === '' || !roomId || isSendingMessage || !roomData) return;
@@ -323,7 +343,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     const trimmedMessage = newMessage.trim();
     setIsSendingMessage(true);
     setNewMessage(''); 
-    setShowMentionSuggestions(false); // Hide suggestions on send
+    setShowMentionSuggestions(false); 
 
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
 
@@ -339,8 +359,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       await addDoc(messagesColRef, userMessageData);
 
       if (trimmedMessage.toLowerCase().includes(`@${AI_MENTION_NAME}`)) {
-        // Extract query part for AI. Example: if message is "Hi @help_me what is X?", query is "what is X?"
-        // This is a simple heuristic; more robust parsing might be needed for complex queries.
         const aiQueryMatch = trimmedMessage.match(new RegExp(`@${AI_MENTION_NAME}\\s*(.*)`, 'i'));
         const aiQuery = aiQueryMatch && aiQueryMatch[1] ? aiQueryMatch[1].trim() : "User mentioned me.";
 
@@ -409,34 +427,61 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     
     const isCreator = roomData.createdBy === currentUserProfile.uid;
     
-    if (!isCreator) {
-        toast({ title: "Navigating Away", description: `You have left ${roomData.name}.`});
-        router.push('/study-rooms');
-        return;
-    }
+    // If user is not the creator, they can just navigate away without DB changes for members list
+    // Or, if we want to track active members, we'd still remove them.
+    // For simplicity, let's always try to remove member if they are in the list.
     
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     
-    const roomUpdateData: Partial<RoomData> = {
-        updatedAt: serverTimestamp()
-    };
-
     if (memberToRemove) {
-        roomUpdateData.members = arrayRemove(memberToRemove);
-        roomUpdateData.memberCount = Math.max(0, (roomData.memberCount || 1) - 1);
+        const roomDocRef = doc(db, 'studyRooms', roomId);
+        const roomUpdateData: any = { // Use any for flexibility with serverTimestamp
+            members: arrayRemove(memberToRemove),
+            memberCount: Math.max(0, (roomData.memberCount || 1) - 1),
+            updatedAt: serverTimestamp()
+        };
+        try {
+            await updateDoc(roomDocRef, roomUpdateData);
+        } catch (error) {
+            console.error("Error updating members list on leave: ", error);
+            // Proceed to navigate away even if DB update fails for non-creators
+        }
     }
 
+    toast({ title: "Navigating Away", description: `You have left ${roomData.name}.`});
+    router.push('/study-rooms');
+  };
+
+
+  const handleDrawOnWhiteboard = useCallback(async (newPath: WhiteboardPath) => {
+    if (!user || !roomId) return;
+    const roomDocRef = doc(db, 'studyRooms', roomId);
     try {
-        const roomDocRef = doc(db, 'studyRooms', roomId);
-        await updateDoc(roomDocRef, roomUpdateData);
-        toast({ title: "Left Room", description: `You have left ${roomData.name}.`});
-        router.push('/study-rooms');
+      await updateDoc(roomDocRef, {
+        whiteboardDrawing: arrayUnion(newPath),
+        updatedAt: serverTimestamp()
+      });
     } catch (error) {
-        const firebaseError = error as FirebaseError;
-        console.error("Error leaving room (as creator): ", firebaseError);
-        toast({ title: "Error Leaving Room", description: firebaseError.message, variant: "destructive"});
+      console.error("Error saving whiteboard path: ", error);
+      toast({ title: "Whiteboard Error", description: "Could not save drawing.", variant: "destructive" });
+    }
+  }, [user, roomId, toast]);
+
+  const handleClearWhiteboard = async () => {
+    if (!user || !roomId) return;
+    const roomDocRef = doc(db, 'studyRooms', roomId);
+    try {
+      await updateDoc(roomDocRef, {
+        whiteboardDrawing: [],
+        updatedAt: serverTimestamp()
+      });
+      toast({ title: "Whiteboard Cleared" });
+    } catch (error) {
+      console.error("Error clearing whiteboard: ", error);
+      toast({ title: "Whiteboard Error", description: "Could not clear whiteboard.", variant: "destructive" });
     }
   };
+
 
   const isRoomCreator = roomData?.createdBy === currentUserProfile?.uid;
 
@@ -492,14 +537,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
               )}
             </div>
             <Button variant="outline" size="sm"><Users className="mr-2 h-4 w-4" /> {roomData?.memberCount || 0} Members</Button>
-            <Button variant="destructive" size="sm" onClick={handleLeaveRoom} disabled={!isRoomCreator}>
+            <Button variant="destructive" size="sm" onClick={handleLeaveRoom}>
               <LogOut className="mr-2 h-4 w-4" /> Leave
             </Button>
           </div>
         }
       />
 
-      <Tabs defaultValue="chat" className="flex-grow flex flex-col mt-4 overflow-hidden">
+      <Tabs defaultValue="chat" className="flex-grow flex flex-col mt-1 overflow-hidden">
         <TabsList className="grid w-full grid-cols-2 mb-4 flex-shrink-0">
           <TabsTrigger value="whiteboard">Whiteboard</TabsTrigger>
           <TabsTrigger value="chat">Chat</TabsTrigger>
@@ -507,29 +552,73 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
         <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col overflow-hidden">
           <Card className="flex-grow flex flex-col overflow-hidden">
-            <CardHeader className="sticky top-0 bg-background z-10 flex flex-row items-center justify-between py-3 px-4 flex-shrink-0 border-b">
+             <CardHeader className="sticky top-0 bg-background z-10 flex flex-col sm:flex-row items-center justify-between py-2 px-3 flex-shrink-0 border-b gap-2">
                 <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
-            </CardHeader>
-            <CardContent className="flex-grow flex items-center justify-center bg-muted/20 border-2 border-dashed border-muted-foreground/10 rounded-md m-2 md:m-4 p-2">
-                <div className="text-center text-muted-foreground">
-                <Presentation size={48} className="mx-auto opacity-40 mb-3" />
-                <h3 className="text-lg font-semibold">Shared Whiteboard</h3>
-                <p className="mt-1 text-sm ">Interactive collaboration tools are coming soon!</p>
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                    <Button variant={activeTool === 'pen' ? 'secondary' : 'ghost'} size="sm" onClick={() => setActiveTool('pen')} title="Pen">
+                        <PenTool className="h-4 w-4" /> <span className="ml-1 sm:hidden">Pen</span>
+                    </Button>
+                    <Button variant={activeTool === 'eraser' ? 'secondary' : 'ghost'} size="sm" onClick={() => setActiveTool('eraser')} title="Eraser">
+                        <Eraser className="h-4 w-4" /> <span className="ml-1 sm:hidden">Eraser</span>
+                    </Button>
+                    <Separator orientation="vertical" className="h-6 mx-1" />
+                    {predefinedColors.map(color => (
+                        <Button 
+                            key={color} 
+                            variant="outline" 
+                            size="icon" 
+                            className={cn("h-7 w-7 p-0 border-2", activeColor === color && activeTool === 'pen' ? 'border-primary ring-2 ring-primary' : 'border-transparent')}
+                            style={{ backgroundColor: color }}
+                            onClick={() => setActiveColor(color)}
+                            title={`Color: ${color}`}
+                            aria-label={`Select color ${color}`}
+                        />
+                    ))}
+                    <Separator orientation="vertical" className="h-6 mx-1" />
+                    {strokeWidths.map(width => (
+                         <Button 
+                            key={`stroke-${width}`}
+                            variant={activeStrokeWidth === width ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="p-1.5"
+                            onClick={() => setActiveStrokeWidth(width)}
+                            title={`Stroke width: ${width}px`}
+                         >
+                            <GripVertical className="h-4 w-4 opacity-50" style={{transform: `scaleY(${width/5 * 0.8 + 0.4})`}}/>
+                            <span className="text-xs ml-0.5 tabular-nums">{width}</span>
+                         </Button>
+                    ))}
+                     <Separator orientation="vertical" className="h-6 mx-1" />
+                    <Button variant="destructive" size="sm" onClick={handleClearWhiteboard} title="Clear Whiteboard">
+                        <Trash2 className="h-4 w-4" /> <span className="ml-1 sm:hidden">Clear</span>
+                    </Button>
                 </div>
+            </CardHeader>
+            <CardContent className="flex-grow p-0 m-0 relative overflow-hidden">
+               {/* This div will define the drawing area size for the canvas */}
+               <div className="w-full h-full bg-card"> 
+                <WhiteboardCanvas
+                    paths={whiteboardPaths}
+                    onDrawPath={handleDrawOnWhiteboard}
+                    activeColor={activeColor}
+                    activeStrokeWidth={activeStrokeWidth}
+                    activeTool={activeTool}
+                    canvasBackgroundColorCssVar="--card" // Use CSS variable for card background
+                />
+               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="chat" className="flex-grow flex flex-col m-0 overflow-hidden">
-          <Card className="flex flex-col flex-grow overflow-hidden max-h-[75vh]">
+           <Card className="flex flex-col flex-grow overflow-hidden max-h-[75vh]"> {/* max-h applied here */}
             <CardHeader className="sticky top-0 bg-background z-10 py-3 px-4 flex-shrink-0 border-b">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-1 min-h-0 relative border-t border-b"> 
-                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto">
-                    <div className="p-2 md:p-4 space-y-4">
+            <div className="flex-grow min-h-0 relative border-t border-b"> {/* Wrapper for ScrollArea */}
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto"> {/* Actual scrollable container */}
+                    <div className="p-2 md:p-4 space-y-4"> {/* Padding inside scrollable */}
                         {messages.map((msg) => {
                         const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
                         const isAIMessage = msg.userId === AI_USER_ID;
@@ -575,7 +664,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                 </div>
             </div>
 
-            <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t relative">
+            <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t">
               <form onSubmit={handleSendMessage} className="flex gap-2">
                 {showMentionSuggestions && mentionSuggestions.length > 0 && (
                   <div
@@ -633,3 +722,4 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     </div>
   );
 }
+
