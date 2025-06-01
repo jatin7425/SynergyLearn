@@ -32,7 +32,6 @@ interface StoredScheduleData {
   holidayEndTime?: string;
   utilizeHolidays: boolean;
   startDateForOutline: string;
-  // Each item in weeklyOutline can now store its dailyTasks and a flag
   weeklyOutline: (WeeklyGoalItem & { dailyTasks?: DailyTask[], dailyScheduleGenerated?: boolean, summary?: string })[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -56,7 +55,6 @@ export default function SchedulePage() {
   const pathname = usePathname();
   const { toast } = useToast();
 
-  // Form state for overall schedule parameters
   const [learningGoal, setLearningGoal] = useState('');
   const [scheduleDuration, setScheduleDuration] = useState<'1 month' | '1 year' | '2 years'>('1 month');
   const [workingDayStartTime, setWorkingDayStartTime] = useState('09:00');
@@ -66,9 +64,8 @@ export default function SchedulePage() {
   const [holidayEndTime, setHolidayEndTime] = useState('');
   const [utilizeHolidays, setUtilizeHolidays] = useState(false);
 
-  // State for generated content and UI control
   const [isLoadingWeeklyOutline, setIsLoadingWeeklyOutline] = useState(false);
-  const [isLoadingDailyTasksForWeek, setIsLoadingDailyTasksForWeek] = useState<number | null>(null); // weekNumber
+  const [isLoadingDailyTasksForWeek, setIsLoadingDailyTasksForWeek] = useState<number | null>(null);
 
   const [activeMainTab, setActiveMainTab] = useState<string>("configure");
   const [selectedWeekNumberForDetails, setSelectedWeekNumberForDetails] = useState<number | null>(null);
@@ -125,19 +122,15 @@ export default function SchedulePage() {
             if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
               setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
             }
-             // Only switch to "weeklyDetails" if it's not already the active tab
-            // and if the outline has content. This prevents forcing the tab on initial load
-            // if the user was already on "configure".
             if (activeMainTab === "configure" && data.weeklyOutline.length > 0) {
                  setActiveMainTab("weeklyDetails");
             }
         } else {
-            setSelectedWeekNumberForDetails(null); // No outline, no selected week
-            if (activeMainTab === "weeklyDetails") { // If on weekly tab but outline is gone, switch back
+            setSelectedWeekNumberForDetails(null);
+            if (activeMainTab === "weeklyDetails") {
                 setActiveMainTab("configure");
             }
         }
-
       } else {
         setStoredScheduleData(null);
         setSelectedWeekNumberForDetails(null);
@@ -151,9 +144,24 @@ export default function SchedulePage() {
     });
 
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
-    const unsubscribeTimeState = onSnapshot(timeStateDocRef, (docSnap) => {
+    const unsubscribeTimeState = onSnapshot(timeStateDocRef, async (docSnap) => {
       if (docSnap.exists()) {
-        setTimeTrackingState(docSnap.data() as TimeTrackingState);
+        const fetchedState = docSnap.data() as TimeTrackingState;
+        
+        if (fetchedState.status !== 'clocked_out' && fetchedState.currentSessionId) {
+          const logDocRef = doc(db, 'users', user.uid, 'timeTrackingLogs', fetchedState.currentSessionId);
+          const logDocSnap = await getDoc(logDocRef);
+          if (!logDocSnap.exists()) {
+            console.warn(`Log document ${fetchedState.currentSessionId} not found. Resetting time tracking state.`);
+            const correctedState: TimeTrackingState = { status: 'clocked_out', currentSessionId: null, lastClockInTime: null, lastBreakStartTime: null, lastLunchStartTime: null };
+            await setDoc(timeStateDocRef, correctedState); 
+            setTimeTrackingState(correctedState); 
+          } else {
+            setTimeTrackingState(fetchedState); 
+          }
+        } else {
+          setTimeTrackingState(fetchedState); 
+        }
       } else {
         const initialTimeState: TimeTrackingState = { status: 'clocked_out' };
         setDoc(timeStateDocRef, initialTimeState).catch(err => console.error("Error initializing time state", err));
@@ -171,7 +179,6 @@ export default function SchedulePage() {
       unsubscribeTimeState();
     };
   }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeMainTab]);
-
 
   const handleGenerateWeeklyOutline = async (e: FormEvent) => {
     e.preventDefault();
@@ -219,15 +226,12 @@ export default function SchedulePage() {
 
       await setDoc(scheduleDocRef, dataToSave, { merge: true });
       
-      // onSnapshot will update storedScheduleData, so no direct setStoredScheduleData needed here for that.
-      // However, we need to update UI state that depends on the *new* outline immediately.
       if (outlineWithEmptyTasks.length > 0) {
         setSelectedWeekNumberForDetails(outlineWithEmptyTasks[0].weekNumber);
         setActiveMainTab("weeklyDetails");
       } else {
         setActiveMainTab("configure");
       }
-
 
       toast({ title: "Weekly Outline Generated!", description: "Your high-level weekly plan is ready." });
     } catch (error) {
@@ -246,7 +250,7 @@ export default function SchedulePage() {
       const input: GenerateDailyTasksInput = {
         periodGoal: week.goalOrTopic,
         periodStartDate: week.startDate,
-        periodDurationDays: 7, // Assuming 7 days for a week's detailed plan
+        periodDurationDays: 7,
         workingDayStartTime: storedScheduleData.workingDayStartTime,
         workingDayEndTime: storedScheduleData.workingDayEndTime,
         weeklyHolidays: storedScheduleData.weeklyHolidays,
@@ -268,7 +272,6 @@ export default function SchedulePage() {
         weeklyOutline: updatedWeeklyOutline,
         updatedAt: serverTimestamp()
       });
-      // No need to call setStoredScheduleData, onSnapshot will update it.
 
       toast({ title: `Daily Plan for Week ${week.weekNumber} Generated!`, description: `Topic: ${week.goalOrTopic}` });
     } catch (error) {
@@ -292,21 +295,29 @@ export default function SchedulePage() {
   
   const handleClockIn = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_out') return;
+    
     const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id; 
+    const newLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', newSessionId);
     const newLog = {
-        sessionId: newSessionId,
+        // sessionId: newSessionId, // Not strictly needed if doc ID is the session ID
         type: 'study_session_start',
         startTime: serverTimestamp(),
         endTime: null,
         durationMinutes: 0,
         activities: []
     };
-    await addDoc(collection(db, 'users', user.uid, 'timeTrackingLogs'), newLog);
-    await updateTimeTrackingState({ 
-        status: 'clocked_in', 
-        lastClockInTime: serverTimestamp() as Timestamp, 
-        currentSessionId: newSessionId 
-    });
+    
+    try {
+        await setDoc(newLogRef, newLog);
+        await updateTimeTrackingState({ 
+            status: 'clocked_in', 
+            lastClockInTime: serverTimestamp() as Timestamp, 
+            currentSessionId: newSessionId 
+        });
+    } catch (error) {
+        console.error("Error clocking in:", error);
+        toast({ title: "Clock In Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
 
   const handleClockOut = async () => {
@@ -315,22 +326,25 @@ export default function SchedulePage() {
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        // Ensure lastClockInTime is treated as a Firestore Timestamp for correct date operations
         const lastClockInDate = (timeTrackingState.lastClockInTime as Timestamp).toDate();
         durationMinutes = Math.round((now.toMillis() - lastClockInDate.getTime()) / (1000 * 60));
     }
 
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-    await updateDoc(sessionLogRef, {
-        endTime: now,
-        durationMinutes: durationMinutes
-    });
-    
-    await updateTimeTrackingState({ 
-        status: 'clocked_out', 
-        lastClockInTime: null, 
-        currentSessionId: null 
-    });
+    try {
+        await updateDoc(sessionLogRef, {
+            endTime: now,
+            durationMinutes: durationMinutes
+        });
+        await updateTimeTrackingState({ 
+            status: 'clocked_out', 
+            lastClockInTime: null, 
+            currentSessionId: null 
+        });
+    } catch (error) {
+        console.error("Error clocking out:", error);
+        toast({ title: "Clock Out Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
   
   const handleStartBreak = async () => {
@@ -338,8 +352,13 @@ export default function SchedulePage() {
       
       const breakActivity = { type: 'break_start', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
-      await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: Timestamp.now() });
+      try {
+        await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
+        await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: Timestamp.now() });
+      } catch (error) {
+        console.error("Error starting break:", error);
+        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+      }
   };
 
   const handleEndBreak = async () => {
@@ -347,8 +366,13 @@ export default function SchedulePage() {
       
       const breakEndActivity = { type: 'break_end', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
-      await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
+      try {
+        await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
+        await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
+      } catch (error) {
+        console.error("Error ending break:", error);
+        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+      }
   };
   
    const handleStartLunch = async () => {
@@ -356,8 +380,13 @@ export default function SchedulePage() {
       
       const lunchActivity = { type: 'lunch_start', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
-      await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: Timestamp.now() });
+      try {
+        await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
+        await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: Timestamp.now() });
+      } catch (error) {
+        console.error("Error starting lunch:", error);
+        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+      }
   };
 
   const handleEndLunch = async () => {
@@ -365,10 +394,14 @@ export default function SchedulePage() {
       
       const lunchEndActivity = { type: 'lunch_end', timestamp: Timestamp.now() };
       const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
-      await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
+      try {
+        await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
+        await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
+      } catch (error) {
+        console.error("Error ending lunch:", error);
+        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+      }
   };
-
 
   if (authLoading || isLoadingStoredSchedule || isLoadingTimeState) {
     return (
@@ -524,7 +557,7 @@ export default function SchedulePage() {
                       <SelectContent>
                         {storedScheduleData.weeklyOutline.map(week => (
                           <SelectItem key={`week-select-${week.weekNumber}`} value={week.weekNumber.toString()}>
-                            Week {week.weekNumber}: {week.goalOrTopic.substring(0,30)}{week.goalOrTopic.length > 30 ? '...' : ''}
+                            Week {week.weekNumber}: {week.goalOrTopic.substring(0,30)}{week.goalOrTopic.length > 30 ? '...' : ''} ({format(parseISO(week.startDate), 'MMM d')} - {format(parseISO(week.endDate), 'MMM d')})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -565,7 +598,7 @@ export default function SchedulePage() {
                                     <TableBody>
                                     {currentSelectedWeekData.dailyTasks.map((task, index) => (
                                         <TableRow key={index}>
-                                        <TableCell>{task.date}</TableCell>
+                                        <TableCell>{task.date ? format(parseISO(task.date), 'MMM d, yyyy') : 'N/A'}</TableCell>
                                         <TableCell>{task.dayOfWeek}</TableCell>
                                         <TableCell>{task.topic}</TableCell>
                                         <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
