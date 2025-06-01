@@ -188,52 +188,79 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
   const searchUsersByEmail = async (searchTerm: string) => {
     if (!searchTerm.trim() || !user) {
       setSearchResults([]);
+      console.log('[UserSearch] Aborted: Search term empty or user not logged in.');
       return;
     }
     setIsSearchingUsers(true);
+    setSearchResults([]); // Clear previous results
     const normalizedSearchTerm = searchTerm.toLowerCase();
-    console.log('[UserSearch] Searching for:', normalizedSearchTerm);
+    console.log(`[UserSearch] Initiated for term: "${normalizedSearchTerm}". Current user: ${user.uid}`);
 
     try {
       const usersRef = collection(db, 'userProfiles');
-      // Fetch latest 100 users created. For production, a proper search index (e.g., Algolia) is better.
-      const q = query(usersRef, orderBy('createdAt', 'desc'), limit(100));
+      console.log('[UserSearch] Firestore collection reference:', usersRef.path);
       
+      // Query for the latest 100 users (adjust limit as needed)
+      const q = query(usersRef, orderBy('createdAt', 'desc'), limit(100));
+      console.log('[UserSearch] Firestore query:', q);
+
       const querySnapshot = await getDocs(q);
+      console.log(`[UserSearch] Firestore query successful. Snapshot size: ${querySnapshot.size}. Is empty: ${querySnapshot.empty}`);
+
       const candidates: UserProfile[] = [];
       querySnapshot.forEach((doc) => {
-        if (doc.id !== user.uid) { // Exclude current user
-          candidates.push({ id: doc.id, ...doc.data() } as UserProfile);
+        // Ensure the document has the necessary fields before adding to candidates
+        const data = doc.data();
+        if (doc.id !== user.uid && data.email && data.displayName && data.createdAt) { // Check for createdAt as it's used for ordering
+          candidates.push({ id: doc.id, ...data } as UserProfile);
+        } else {
+          console.warn(`[UserSearch] Profile ${doc.id} skipped due to missing fields or is current user.`);
         }
       });
-      console.log('[UserSearch] Candidates from Firestore:', candidates);
+      console.log('[UserSearch] Raw candidate profiles fetched (excluding self):', JSON.parse(JSON.stringify(candidates)));
   
-      const filteredUsers = candidates.filter(profile =>
-        (profile.email && profile.email.toLowerCase().includes(normalizedSearchTerm)) ||
-        (profile.displayName && profile.displayName.toLowerCase().includes(normalizedSearchTerm))
-      ).slice(0, 7); // Show top 7 matches
-      console.log('[UserSearch] Filtered users:', filteredUsers);
-  
+      if (candidates.length === 0 && !querySnapshot.empty) {
+         console.warn('[UserSearch] All fetched profiles were skipped (e.g. all were current user or missing fields).');
+      }
+
+      const filteredUsers = candidates.filter(profile => {
+        const emailMatch = profile.email && profile.email.toLowerCase().includes(normalizedSearchTerm);
+        const nameMatch = profile.displayName && profile.displayName.toLowerCase().includes(normalizedSearchTerm);
+        // console.log(`[UserSearch] Filtering profile ${profile.id} (${profile.email}, ${profile.displayName}): emailMatch=${emailMatch}, nameMatch=${nameMatch}`);
+        return emailMatch || nameMatch;
+      }).slice(0, 7); // Show top 7 matches
+      
+      console.log('[UserSearch] Filtered users to display:', JSON.parse(JSON.stringify(filteredUsers)));
       setSearchResults(filteredUsers);
   
-      if (candidates.length === 0 && searchTerm.length > 2) {
+      if (querySnapshot.empty) {
         toast({
-          title: "No User Profiles Queried",
-          description: "The initial search query returned no user profiles from the database. Ensure user profiles exist with a 'createdAt' field.",
-          variant: "default"
+          title: "No User Profiles Found",
+          description: "The 'userProfiles' collection in the database appears to be empty or the query returned no documents. Please ensure user profiles exist and contain a 'createdAt' field for ordering.",
+          variant: "default",
+          duration: 7000,
         });
-      } else if (filteredUsers.length === 0 && candidates.length > 0 && searchTerm.length > 2) {
+      } else if (candidates.length === 0) {
+        // This case implies profiles were fetched but all were the current user or lacked necessary fields
         toast({
-          title: "No Matches in Recent Users",
-          description: `Searched ${candidates.length} recent user profile(s). Try a different search term, or ensure profiles have matching email/display names.`,
-          variant: "default"
+          title: "No Other User Profiles",
+          description: "No other suitable user profiles were found in the recent batch to search from.",
+          variant: "default",
+          duration: 7000,
+        });
+      } else if (filteredUsers.length === 0) {
+        toast({
+          title: "No Matches Found",
+          description: `Searched ${candidates.length} recent user profile(s). Your term "${searchTerm}" didn't match any email or display name. Try a different term.`,
+          variant: "default",
+          duration: 7000,
         });
       }
   
     } catch (err) {
-      console.error("[UserSearch] Error searching users:", err);
+      console.error("[UserSearch] CRITICAL ERROR searching users:", err);
       setSearchResults([]);
-      toast({ title: "User Search Error", description: "Could not perform user search. Check console for details.", variant: "destructive"});
+      toast({ title: "User Search Error", description: `Could not perform user search. Check console for details. Error: ${(err as Error).message}`, variant: "destructive"});
     } finally {
       setIsSearchingUsers(false);
     }
@@ -241,7 +268,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
-      if (emailSearchQuery.length > 2) { 
+      if (emailSearchQuery.length > 2 && user) { // Ensure user is available for search
         searchUsersByEmail(emailSearchQuery);
       } else {
         setSearchResults([]);
@@ -431,7 +458,7 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
                         </ScrollArea>
                       )}
                       {!isSearchingUsers && searchResults.length === 0 && emailSearchQuery.length > 2 && !selectedUserForSharing && (
-                        <p className="text-xs text-muted-foreground mt-1">No users found matching "{emailSearchQuery}" in recent profiles.</p>
+                        <p className="text-xs text-muted-foreground mt-1">No users found matching "{emailSearchQuery}" in recent profiles. Ensure profiles exist and have 'createdAt' field.</p>
                       )}
                     </div>
                     <Button type="submit" className="w-full" disabled={isProcessingShare || !selectedUserForSharing}>
@@ -528,4 +555,6 @@ export default function NoteDetailPage(props: { params: { id: string } }) {
     </div>
   );
 }
+    
+
     
