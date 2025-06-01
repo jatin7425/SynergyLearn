@@ -4,7 +4,7 @@
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PlusCircle, Users, LogIn, Edit, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, Users, LogIn, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState, type FormEvent, useEffect } from 'react';
@@ -114,9 +114,9 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 0, 
-      members: [],    
-      createdBy: user.uid,
+      memberCount: 0,
+      members: [], 
+      createdBy: user.uid, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -151,7 +151,7 @@ export default function StudyRoomsPage() {
         );
         toast({
           title: "Room Creation Failed: Permissions",
-          description: "Could not create room due to security rule denial. Check browser console for data details to use with Firestore Rules Playground. Ensure your deployed rules match the expected configuration.",
+          description: "Could not create room. Check browser console for data to use with Firestore Rules Playground & ensure deployed rules match expected config.",
           variant: "destructive",
           duration: 15000 
         });
@@ -256,37 +256,49 @@ export default function StudyRoomsPage() {
         </Card>
       ) : (
         <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {studyRooms.map((room) => (
-            <Card key={room.id} className="flex flex-col">
-              <CardHeader>
-                <CardTitle>{room.name}</CardTitle>
-                <CardDescription>Topic: {room.topic}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex-grow">
-                <div className="flex items-center text-sm text-muted-foreground">
-                  <Users className="mr-2 h-4 w-4" />
-                  {room.memberCount} members
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Created: {room.createdAt?.toDate().toLocaleDateString() || 'N/A'}
-                </div>
-                 <div className="mt-1 text-xs text-muted-foreground">
-                  Last Active: {room.updatedAt?.toDate().toLocaleString() || room.createdAt?.toDate().toLocaleString() || 'N/A'}
-                </div>
-              </CardContent>
-              <CardContent className="border-t pt-4 flex justify-between">
-                <Link href={`/study-rooms/${room.id}`} passHref>
-                  <Button>
-                    <LogIn className="mr-2 h-4 w-4" /> Join Room
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ))}
+          {studyRooms.map((room) => {
+            const createdAtValid = room.createdAt && room.createdAt instanceof Timestamp;
+            const updatedAtValid = room.updatedAt && room.updatedAt instanceof Timestamp;
+
+            const createdAtDisplay = createdAtValid ? room.createdAt.toDate().toLocaleDateString() : 'N/A';
+            let lastActiveDisplay = 'N/A';
+            if (updatedAtValid) {
+              lastActiveDisplay = room.updatedAt!.toDate().toLocaleString();
+            } else if (createdAtValid) {
+              lastActiveDisplay = room.createdAt.toDate().toLocaleString();
+            }
+
+            return (
+              <Card key={room.id} className="flex flex-col">
+                <CardHeader>
+                  <CardTitle>{room.name || "Unnamed Room"}</CardTitle>
+                  <CardDescription>Topic: {room.topic || "No Topic"}</CardDescription>
+                </CardHeader>
+                <CardContent className="flex-grow">
+                  <div className="flex items-center text-sm text-muted-foreground">
+                    <Users className="mr-2 h-4 w-4" />
+                    {typeof room.memberCount === 'number' ? room.memberCount : 0} members
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Created: {createdAtDisplay}
+                  </div>
+                   <div className="mt-1 text-xs text-muted-foreground">
+                    Last Active: {lastActiveDisplay}
+                  </div>
+                </CardContent>
+                <CardContent className="border-t pt-4 flex justify-between">
+                  <Link href={`/study-rooms/${room.id}`} passHref>
+                    <Button>
+                      <LogIn className="mr-2 h-4 w-4" /> Join Room
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-    
