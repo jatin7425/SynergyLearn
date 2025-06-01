@@ -7,9 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2 } from 'lucide-react';
-import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react'; // Added useMemo
-import Image from 'next/image';
+import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation } from 'lucide-react';
+import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
+// Removed Image from 'next/image' as it's no longer used for whiteboard placeholder
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -56,7 +56,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const chatScrollAreaRef = useRef<HTMLDivElement>(null); // Renamed for clarity
 
 
   const currentUserProfile = useMemo(() => {
@@ -66,28 +66,24 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       name: user.displayName || user.email?.split('@')[0] || 'Anonymous',
       avatar: user.photoURL || `https://placehold.co/40x40.png`
     };
-  }, [user?.uid, user?.displayName, user?.email, user?.photoURL]); // Granular dependencies
+  }, [user?.uid, user?.displayName, user?.email, user?.photoURL]);
 
   useEffect(() => {
-    // Guard for initial loading states or no room ID
     if (authLoading || !roomId) {
-      // If auth is done loading and there's no user, redirect.
-      if (!authLoading && !user) { // user check is essential here
+      if (!authLoading && !user) {
         toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
         router.push(`/login?redirect=${pathname}`);
       }
-      return; // Exit early if auth is loading or no roomId
+      return;
     }
 
-    // At this point, authLoading is false.
-    // If currentUserProfile is null, it means 'user' was null, which should have been caught by the redirect above.
-    // This check is an additional safeguard or for clarity.
     if (!currentUserProfile) {
-        // This typically means the user is not authenticated or user object is not yet available.
-        // The redirect above should handle the unauthenticated case.
-        // If it reaches here, it's an edge case, ensure setIsLoadingRoom is handled.
-        console.warn("StudyRoomDetailPage: currentUserProfile is null. Auth state might still be resolving or user is not logged in.");
-        setIsLoadingRoom(false); // Ensure loading state is cleared
+        console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false. User might not be fully available yet or issue with AuthContext.");
+        setIsLoadingRoom(false);
+        // Optionally redirect or show an error if currentUserProfile is critical and missing
+        if (!authLoading && !user) { // Double check, this case should ideally be caught above
+             router.push(`/login?redirect=${pathname}`);
+        }
         return;
     }
     
@@ -102,8 +98,16 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
         if (!isMember) {
           const memberData = { ...currentUserProfile, joinedAt: Timestamp.now() };
+          // Ensure memberData has all required fields as per Member interface, especially if currentUserProfile is partial
+          const newMemberPayload: Member = {
+            uid: memberData.uid,
+            name: memberData.name,
+            avatar: memberData.avatar, // This could be undefined if user.photoURL is null
+            joinedAt: memberData.joinedAt,
+          };
+
           const roomUpdateData = {
-              members: arrayUnion(memberData),
+              members: arrayUnion(newMemberPayload),
               memberCount: (fetchedRoomData.members?.length || 0) + 1,
               updatedAt: serverTimestamp()
           };
@@ -111,7 +115,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             await updateDoc(roomDocRef, roomUpdateData);
             fetchedRoomData = {
                 ...fetchedRoomData,
-                members: [...(fetchedRoomData.members || []), memberData],
+                members: [...(fetchedRoomData.members || []), newMemberPayload],
                 memberCount: (fetchedRoomData.memberCount || 0) + 1,
             };
             setRoomData(fetchedRoomData);
@@ -124,7 +128,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                   `\n>>> THIS IS A PERMISSION ERROR FROM FIRESTORE. <<<` +
                   `\n>>> USE THE DATA PAYLOADS BELOW WITH THE FIRESTORE RULES PLAYGROUND TO DEBUG YOUR SECURITY RULES. <<<` +
                   `\nAttempted member data (for arrayUnion):`,
-                  JSON.stringify(memberData, (key, value) => {
+                  JSON.stringify(newMemberPayload, (key, value) => {
                     if (value && typeof value === 'object') {
                       if (typeof (value as any).seconds === 'number' && typeof (value as any).nanoseconds === 'number' && value.constructor && value.constructor.name === 'Timestamp') {
                         return { seconds: (value as Timestamp).seconds, nanoseconds: (value as Timestamp).nanoseconds, _type: "FirestoreTimestamp" };
@@ -149,7 +153,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
             } else {
                 toast({ title: "Error Joining Room", description: firebaseError.message, variant: "destructive"});
             }
-            // Still set room data even if join fails, to show existing state
             setRoomData(fetchedRoomData); 
           }
         } else {
@@ -167,7 +170,6 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       setIsLoadingRoom(false);
     });
 
-    // Setup snapshot listener for messages (chat)
     const messagesColRef = collection(db, 'studyRooms', roomId, 'messages');
     const q = query(messagesColRef, orderBy('timestamp', 'asc'));
     const unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -182,13 +184,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     return () => {
       unsubscribeMessages();
     };
-  }, [roomId, authLoading, currentUserProfile, router, pathname, toast]); // Removed 'user' as direct dependency
+  }, [roomId, authLoading, currentUserProfile, router, pathname, toast]); 
 
+  // Effect for auto-scrolling chat
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollElement = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
+    if (chatScrollAreaRef.current) {
+      const viewport = chatScrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
       }
     }
   }, [messages]);
@@ -311,7 +314,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   };
 
 
-  if (authLoading || (isLoadingRoom && currentUserProfile)) { // Check currentUserProfile to ensure effect runs after it's potentially set
+  if (authLoading || (isLoadingRoom && currentUserProfile)) { 
     return (
         <div className="flex justify-center items-center min-h-screen">
             <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -319,9 +322,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
 
-  // This handles the case where auth is done, user is null (and thus currentUserProfile is null)
   if (!currentUserProfile && !authLoading) { 
-    // The redirect should have happened in useEffect, but this is a fallback display.
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -332,7 +333,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
     );
   }
   
-  if (!roomData && !isLoadingRoom) { // Room data failed to load or room doesn't exist
+  if (!roomData && !isLoadingRoom) { 
      return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -373,13 +374,14 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
       <div className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
         <Card className="lg:col-span-2 flex flex-col min-h-[300px] md:min-h-[400px] lg:min-h-0">
           <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
-            <CardTitle className="flex items-center text-lg"><Palette className="mr-2 h-5 w-5" /> Shared Whiteboard</CardTitle>
+            <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle> {/* Changed icon */}
             <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
           </CardHeader>
-          <CardContent className="flex-grow flex items-center justify-center bg-muted/30 border-2 border-dashed border-muted-foreground/20 rounded-md m-2 md:m-4 p-2">
-            <div className="text-center">
-              <Image src="https://placehold.co/400x250.png" alt="Whiteboard placeholder" width={400} height={250} className="opacity-50 rounded max-w-full h-auto" data-ai-hint="whiteboard sketch" />
-              <p className="mt-2 md:mt-4 text-sm text-muted-foreground">Whiteboard area - Collaboration tools coming soon!</p>
+          <CardContent className="flex-grow flex items-center justify-center bg-muted/20 border-2 border-dashed border-muted-foreground/10 rounded-md m-2 md:m-4 p-2">
+            <div className="text-center text-muted-foreground">
+              <Presentation size={48} className="mx-auto opacity-40 mb-3" />
+              <h3 className="text-lg font-semibold">Shared Whiteboard</h3>
+              <p className="mt-1 text-sm ">Interactive collaboration tools are coming soon!</p>
             </div>
           </CardContent>
         </Card>
@@ -388,7 +390,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
           <CardHeader className="py-3 px-4">
             <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
           </CardHeader>
-          <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={scrollAreaRef}>
+          <ScrollArea className="flex-grow p-2 md:p-4 border-t border-b" ref={chatScrollAreaRef}>
             <div className="space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex items-end gap-2 ${msg.userId === currentUserProfile?.uid ? 'justify-end' : 'justify-start'}`}>
@@ -398,9 +400,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                       <AvatarFallback>{msg.userName?.substring(0,1).toUpperCase() || 'A'}</AvatarFallback>
                     </Avatar>
                   )}
-                  <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-muted rounded-bl-none'}`}>
+                  <div className={`max-w-[75%] p-2 md:p-3 rounded-lg shadow-sm ${msg.userId === currentUserProfile?.uid ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-card border rounded-bl-none'}`}>
                     <p className="text-xs font-semibold mb-0.5">{msg.userName}
-                        <span className="text-xs text-muted-foreground/80 ml-1 font-normal">
+                        <span className={`text-xs ml-1 font-normal ${msg.userId === currentUserProfile?.uid ? 'text-primary-foreground/80' : 'text-muted-foreground/80'}`}>
                             {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
                         </span>
                     </p>
@@ -437,4 +439,3 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
   );
 }
 
-    
