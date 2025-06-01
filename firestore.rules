@@ -1,0 +1,57 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User-specific data (notes, milestones, studyCollections, profile data, schedule, time tracking)
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Study Rooms
+    match /studyRooms/{roomId} {
+      allow read: if request.auth != null;
+
+      // Create rule remains as per your last provided version (creator makes it, basic field checks)
+      allow create: if request.auth != null
+                  && request.resource.data.name is string 
+                  && request.resource.data.topic is string 
+                  && request.resource.data.createdBy == request.auth.uid
+                  && request.resource.data.containsKey('createdAt')
+                  && request.resource.data.containsKey('updatedAt');
+      
+      // UPDATE rule is now "like the user one" - only the creator can update.
+      allow update: if request.auth != null 
+                    && resource.data.createdBy == request.auth.uid // Only the creator can update
+                    && request.resource.data.createdBy == resource.data.createdBy // Creator field itself cannot be changed
+                    && request.resource.data.createdAt == resource.data.createdAt // Creation timestamp cannot be changed
+                    && request.resource.data.containsKey('updatedAt'); // Any update must include an updatedAt field
+
+      // Delete rule remains as per your last provided version (creator deletes it)
+      allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
+    }
+
+    // Study Room Messages rules remain as per your last provided version
+    match /studyRooms/{roomId}/messages/{messageId} {
+      allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId));
+
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid 
+                    && request.resource.data.userName is string 
+                    && request.resource.data.text is string 
+                    && request.resource.data.text.size() > 0 && request.resource.data.text.size() < 1000 
+                    && request.resource.data.containsKey('timestamp')
+                    && exists(/databases/$(database)/documents/studyRooms/$(roomId))
+                    && request.resource.data.keys().hasOnly(['userId', 'userName', 'userAvatar', 'text', 'timestamp']);
+
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid &&
+                     request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() < 1000 &&
+                     request.resource.data.keys().hasOnly(['userId', 'userName', 'userAvatar', 'text', 'timestamp', 'updatedAt']) && 
+                     request.resource.data.userId == resource.data.userId &&
+                     request.resource.data.userName == resource.data.userName;
+
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+  }
+}
