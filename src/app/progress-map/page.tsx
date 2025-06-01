@@ -10,7 +10,7 @@ import { collection, doc, getDoc, onSnapshot, orderBy, query, Timestamp } from '
 import { AlertCircle, CheckCircle, Circle, Loader2, MapPin, Milestone as MilestoneIcon, PlusCircle, Target } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'; // Added useSearchParams
-import { useEffect, useState, useMemo, use } from 'react';
+import React, { useEffect, useState, useMemo, use } from 'react'; // Added React import
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
