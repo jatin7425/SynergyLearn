@@ -108,14 +108,14 @@ export default function StudyRoomsPage() {
       toast({ title: "Room Topic Too Long", description: `Topic must be ${MAX_ROOM_TOPIC_LENGTH} characters or less. Current: ${trimmedTopic.length}`, variant: "destructive"});
       return;
     }
-
+    
     setIsCreatingRoom(true);
 
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
-      memberCount: 0, // Initial member count is 0
-      members: [],    // Initialize with an empty members array
+      memberCount: 0, 
+      members: [],    
       createdBy: user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -151,9 +151,9 @@ export default function StudyRoomsPage() {
         );
         toast({
           title: "Room Creation Failed: Permissions",
-          description: "Could not create room due to security rule denial. Check browser console for data details to use with Firestore Rules Playground. Ensure your deployed rules match the expected configuration and input lengths are valid.",
+          description: "Could not create room due to security rule denial. Check browser console for data details to use with Firestore Rules Playground. Ensure your deployed rules match the expected configuration.",
           variant: "destructive",
-          duration: 15000
+          duration: 15000 
         });
       } else {
         toast({ title: "Creation Failed", description: firebaseError.message, variant: "destructive" });
@@ -288,3 +288,5 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
+
+    
