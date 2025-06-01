@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useParams } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp, deleteDoc, increment } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
 import { getAIChatResponse, type ChatAssistantInput } from '@/ai/flows/chat-assistant-flow';
 import { getChatSummary, type ChatSummaryInput } from '@/ai/flows/summarize-chat-flow';
@@ -153,7 +153,7 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  // const pathname = typeof window !== 'undefined' ? window.location.pathname : ''; // Not used here
 
 
   const { toast } = useToast();
@@ -199,8 +199,9 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
   useEffect(() => {
     if (authLoading || !roomId) {
       if (!authLoading && !user) {
+        const currentPath = typeof window !== 'undefined' ? window.location.pathname : `/study-rooms/${roomId}`;
         toast({ title: "Authentication Required", description: "Please log in to join study rooms.", variant: "destructive" });
-        router.push(`/login?redirect=/study-rooms/${roomId}`);
+        router.push(`/login?redirect=${currentPath}`);
       }
       return;
     }
@@ -209,7 +210,8 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
         console.warn("StudyRoomDetailPage: currentUserProfile is null even after authLoading is false.");
         setIsLoadingRoom(false);
         if (!user) {
-           router.push(`/login?redirect=/study-rooms/${roomId}`);
+           const currentPath = typeof window !== 'undefined' ? window.location.pathname : `/study-rooms/${roomId}`;
+           router.push(`/login?redirect=${currentPath}`);
         }
         return;
     }
@@ -217,7 +219,7 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
     setIsLoadingRoom(true);
     const roomDocRef = doc(db, 'studyRooms', roomId);
 
-    const unsubscribeRoom = onSnapshot(roomDocRef, (docSnap) => {
+    const unsubscribeRoom = onSnapshot(roomDocRef, async (docSnap) => {
       if (docSnap.exists()) {
         const data = { id: docSnap.id, ...docSnap.data() } as RoomData;
         setRoomData(data);
@@ -231,6 +233,27 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
           } else {
             setCanvasBgColor('white'); 
           }
+        }
+
+        // Auto-join logic
+        if (currentUserProfile && data.members && !data.members.find(m => m.uid === currentUserProfile.uid)) {
+            const newMember: Member = {
+                uid: currentUserProfile.uid,
+                name: currentUserProfile.name,
+                avatar: currentUserProfile.avatar,
+                joinedAt: serverTimestamp() as Timestamp
+            };
+            try {
+                await updateDoc(roomDocRef, {
+                    members: arrayUnion(newMember),
+                    memberCount: increment(1),
+                    updatedAt: serverTimestamp()
+                });
+                // No toast here, as onSnapshot will re-render with new member list
+            } catch (joinError) {
+                console.error("Error auto-joining room:", joinError);
+                toast({title: "Failed to Join", description: "Could not automatically add you to the room's member list.", variant: "destructive"});
+            }
         }
 
 
@@ -545,22 +568,21 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
 
   const handleLeaveRoom = async () => {
     if (!currentUserProfile || !roomId || !roomData) return;
-    
-    const isCreator = roomData.createdBy === currentUserProfile.uid;
-    
+        
     const memberToRemove = roomData.members.find(m => m.uid === currentUserProfile.uid);
     
     if (memberToRemove) {
         const roomDocRef = doc(db, 'studyRooms', roomId);
         const roomUpdateData: any = { 
             members: arrayRemove(memberToRemove),
-            memberCount: Math.max(0, (roomData.memberCount || 1) - 1),
+            memberCount: increment(-1), // Safely decrement
             updatedAt: serverTimestamp()
         };
         try {
             await updateDoc(roomDocRef, roomUpdateData);
         } catch (error) {
             console.error("Error updating members list on leave: ", error);
+             // Proceed with navigation even if DB update fails locally
         }
     }
 
@@ -662,12 +684,13 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
   }
 
   if (!currentUserProfile && !authLoading) { 
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : `/study-rooms/${roomId}`;
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
             <AlertCircle className="w-16 h-16 text-destructive mb-4" />
             <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
             <p className="text-muted-foreground mb-4">Please log in to join study rooms.</p>
-            <Button onClick={() => router.push(`/login?redirect=/study-rooms/${roomId}`)}>Go to Login</Button>
+            <Button onClick={() => router.push(`/login?redirect=${currentPath}`)}>Go to Login</Button>
         </div>
     );
   }
@@ -839,12 +862,12 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
                                       <div className={cn(
                                         "flex gap-1 mt-1.5 justify-end transition-opacity opacity-0 group-hover:opacity-100"
                                       )}>
-                                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-primary-foreground/90" onClick={() => handleStartEdit(msg)} title="Edit message">
+                                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-primary-foreground" onClick={() => handleStartEdit(msg)} title="Edit message">
                                           <Edit2 className="h-3 w-3" />
                                         </Button>
                                         <AlertDialog>
                                           <AlertDialogTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-destructive-foreground/80" title="Delete message">
+                                            <Button variant="ghost" size="icon" className="h-5 w-5 p-0 text-primary-foreground/70 hover:text-destructive-foreground hover:bg-destructive/80" title="Delete message">
                                               <Trash2 className="h-3 w-3" />
                                             </Button>
                                           </AlertDialogTrigger>
@@ -950,5 +973,3 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
     </div>
   );
 }
-
-    
