@@ -5,11 +5,10 @@ import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-// ScrollArea is removed as Card will now handle scrolling
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot } from 'lucide-react';
-import { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
+import React, { useState, useEffect, use, FormEvent, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -46,8 +45,70 @@ interface Message {
 }
 
 const AI_USER_ID = 'AI_ASSISTANT';
-const AI_USER_NAME = 'AI Helper';
-const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI'; // Using accent color
+const AI_USER_NAME = 'AI Helper'; // This is for display, @help_me is the trigger
+const AI_AVATAR_URL = 'https://placehold.co/40x40/7A2BF5/ffffff.png&text=AI';
+
+function renderMessageWithTags(
+  text: string,
+  members: Member[] | undefined,
+  aiTrigger: string, // e.g., "help_me"
+  currentUserId?: string
+): React.ReactNode {
+  if (!text) return '';
+  const words = text.split(/(\s+)/); // Split by space, keeping spaces for reconstruction
+
+  return words.map((word, index) => {
+    if (word.startsWith('@')) {
+      const mentionWithPunctuation = word.substring(1);
+      
+      let actualMentionName = mentionWithPunctuation;
+      let punctuation = '';
+      
+      // Regex to find common trailing punctuation
+      const punctuationRegex = /([!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]+)$/;
+      const punctuationMatch = mentionWithPunctuation.match(punctuationRegex);
+      
+      if (punctuationMatch && punctuationMatch[0]) {
+        actualMentionName = mentionWithPunctuation.substring(0, mentionWithPunctuation.length - punctuationMatch[0].length);
+        punctuation = punctuationMatch[0];
+      }
+
+      // Check for AI trigger
+      if (actualMentionName.toLowerCase() === aiTrigger.toLowerCase()) {
+        return (
+          <React.Fragment key={index}>
+            <strong className="text-accent font-semibold cursor-pointer hover:underline">
+              @{actualMentionName}
+            </strong>
+            {punctuation}
+          </React.Fragment>
+        );
+      }
+
+      // Check for member mention
+      const mentionedMember = members?.find(m => m.name.toLowerCase() === actualMentionName.toLowerCase());
+      if (mentionedMember) {
+        const isSelfMention = currentUserId && mentionedMember.uid === currentUserId;
+        return (
+          <React.Fragment key={index}>
+            <strong
+              className={cn(
+                "font-semibold cursor-pointer hover:underline",
+                isSelfMention ? "text-secondary-foreground bg-primary/20 px-1 rounded" : "text-primary"
+              )}
+            >
+              @{actualMentionName}
+            </strong>
+            {punctuation}
+          </React.Fragment>
+        );
+      }
+    }
+    // Return the original word (could be a non-matching @word, regular word, or whitespace)
+    return word; 
+  });
+}
+
 
 export default function StudyRoomDetailPage(props: { params: Promise<{ id:string }> }) {
   const resolvedParams = use(props.params);
@@ -129,7 +190,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
   useEffect(() => {
     if (messagesEndRef.current) {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+        messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages]);
 
@@ -329,7 +390,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
 
         <TabsContent value="whiteboard" className="flex-grow m-0 flex flex-col overflow-hidden">
           <Card className="flex-grow flex flex-col overflow-hidden">
-            <CardHeader className="flex flex-row items-center justify-between py-3 px-4 flex-shrink-0">
+            <CardHeader className="sticky top-0 bg-background z-10 flex flex-row items-center justify-between py-3 px-4 flex-shrink-0 border-b">
                 <CardTitle className="flex items-center text-lg"><Presentation className="mr-2 h-5 w-5 text-primary" /> Shared Whiteboard</CardTitle>
                 <Button variant="ghost" size="sm" onClick={() => toast({title: "Coming Soon!"})}><Edit2 className="mr-2 h-4 w-4" /> Tools</Button>
             </CardHeader>
@@ -344,12 +405,13 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
         </TabsContent>
 
         <TabsContent value="chat" className="flex-grow flex flex-col m-0 overflow-hidden">
-          <Card className="flex flex-col flex-grow overflow-y-auto max-h-[75vh]">
+          <Card className="flex flex-col flex-grow overflow-hidden max-h-[75vh]">
             <CardHeader className="sticky top-0 bg-background z-10 py-3 px-4 flex-shrink-0 border-b">
               <CardTitle className="flex items-center text-lg"><MessageSquare className="mr-2 h-5 w-5" /> Chat</CardTitle>
             </CardHeader>
             
-            <div className="flex-grow p-2 md:p-4 space-y-4"> {/* Message area */}
+            <div className="flex-1 min-h-0 relative border-t border-b overflow-y-auto"> {/* Scrollable message area */}
+              <div className="p-2 md:p-4 space-y-4"> {/* Inner padding for messages */}
                 {messages.map((msg) => {
                 const isCurrentUserMessage = msg.userId === currentUserProfile?.uid;
                 const isAIMessage = msg.userId === AI_USER_ID;
@@ -376,7 +438,9 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                                 {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'sending...'}
                             </span>
                         </p>
-                        <p className="text-sm break-words">{msg.text}</p>
+                        <p className="text-sm break-words">
+                           {renderMessageWithTags(msg.text, roomData?.members, "help_me", currentUserProfile?.uid)}
+                        </p>
                     </div>
                     {isCurrentUserMessage && (
                         <Avatar className="h-8 w-8">
@@ -389,6 +453,7 @@ export default function StudyRoomDetailPage(props: { params: Promise<{ id:string
                 })}
                 {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages yet. Start the conversation or ask <code className="bg-muted px-1 py-0.5 rounded">@help_me</code> for assistance!</p>}
                 <div ref={messagesEndRef} />
+              </div>
             </div>
 
             <CardContent className="sticky bottom-0 bg-background z-10 pt-2 md:pt-4 pb-2 flex-shrink-0 border-t">
