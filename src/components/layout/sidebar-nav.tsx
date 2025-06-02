@@ -18,7 +18,8 @@ import {
   CalendarClock,
   MapPin,
   LifeBuoy, 
-  ShieldCheck, // Added for Admin
+  ShieldCheck, 
+  UserCog, // Icon for User Management
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -55,6 +56,7 @@ const navItems = [
     icon: ShieldCheck,
     subItems: [
         { href: '/admin/model-settings', label: 'Model Settings', icon: Sparkles },
+        { href: '/admin/user-management', label: 'User Management', icon: UserCog },
     ],
   }
 ];

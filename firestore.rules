@@ -4,100 +4,61 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // User-specific data (notes, milestones, studyCollections, profile data, schedule, time tracking)
+    // Helper function to check if a user is an admin
+    // For prototype, hardcoding the admin UID. In production, use custom claims.
+    function isAdmin(userId) {
+      return userId == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2'; // Replace with your actual admin UID
+    }
+
+    // User specific data (notes, milestones, etc.)
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // User Notes - Specific rules for notes
-    match /users/{userId}/notes/{noteId} {
-      // Any authenticated user can read a note if they have the path (e.g., via a share link)
-      allow read: if request.auth != null;
-      // Only the owner can write or delete
-      allow write, delete: if request.auth != null && request.auth.uid == userId;
+    // User profiles (created during sign-up)
+    match /userProfiles/{profileUserId} {
+      // Allow user to read/write their own profile
+      // Allow admin to read any user profile
+      allow read: if request.auth != null && (request.auth.uid == profileUserId || isAdmin(request.auth.uid));
+      allow write: if request.auth != null && request.auth.uid == profileUserId; // Only user can write their own profile
     }
     
-    // User Profiles (accessible by anyone for public info like display name/avatar, but only owner can write)
-    // This is a more specific rule for the 'profile' subcollection within users.
-    match /users/{userId}/profile/{profileDocId} {
-      allow read: if true; // Publicly readable for display names, avatars etc.
-      allow write: if request.auth != null && request.auth.uid == userId; // Only owner can write
-    }
-    
-    // Shared Note Links
-    match /sharedNoteLinks/{linkId} {
-      // Authenticated users can read a link document to resolve it
-      allow read: if request.auth != null;
-      // Only the owner of the note (whose UID is stored in the link doc) can create a link for their note
-      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-      // Only the owner of the note can delete (revoke) the link
-      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      // Updates to links are generally not needed for this simple model
-      allow update: if false;
-    }
-
-    // System Agents (e.g., AI Helper profile)
-    match /systemAgents/{agentId} {
-      // Allow authenticated users to read (e.g., to get AI helper's name/avatar)
-      allow read: if request.auth != null;
-      // Allow creation/update only if the agentId is the specific AI_PROFILE_ID
-      // and from an authenticated user (e.g., admin action from settings page)
-      // In a real app, you'd restrict write to specific admin UIDs.
-      allow write: if request.auth != null && agentId == 'AI_ASSISTANT_MAIN';
-    }
-
-    // Admin Configuration
-    match /adminConfig/{configDocId} {
-      // For now, allow any authenticated user to manage for ease of testing.
-      // In a real app, this would be restricted to admin UIDs:
-      // allow read, write: if request.auth != null && request.auth.token.admin == true;
-      // Or: allow read, write: if request.auth != null && request.auth.uid in ['admin_uid_1', 'admin_uid_2'];
-      allow read, write: if request.auth != null;
-    }
-
     // Study Rooms
     match /studyRooms/{roomId} {
-      allow read: if request.auth != null;
-
-      // Only allow creation if the current user sets their UID as createdBy
-      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
-
-      // Creator can update anything.
-      // Non-creators can update specific fields: members, memberCount, whiteboardDrawing, and updatedAt.
-      // This allows users to join/leave (modifying members and memberCount) and draw on the whiteboard.
+      allow read: if request.auth != null; // Any authenticated user can read room details (e.g., to list them)
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid; // User can create if they are the creator
       allow update: if request.auth != null && 
-                      (
-                        resource.data.createdBy == request.auth.uid || 
-                        (
-                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt']) ||
-                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt']) || // For join/leave
-                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt']) // For whiteboard
-                        )
-                      );
-                      
-      allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
+                      (request.resource.data.createdBy == request.auth.uid || // Creator can update
+                       request.resource.data.members.hasAny([request.auth.uid])); // Or members can update (e.g. drawing on whiteboard, adding themselves to members list)
+                                                                                // More granular control might be needed for specific fields (e.g. only creator can change name/topic)
     }
 
-    // Study Room Messages
     match /studyRooms/{roomId}/messages/{messageId} {
-      allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId));
+      allow read: if request.auth != null; // Any authenticated user in the room context (implicitly) can read messages
+      allow create: if request.auth != null && 
+                      (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'AI_ASSISTANT'); // User can create their own messages, or AI can
+      allow update: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can edit
+      allow delete: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can delete
+    }
 
-      allow create: if
-                      // Case 1: Authenticated user creating their own message
-                      (request.auth != null && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
-                      // Case 2: Server/AI creating an AI message (request.auth will likely be null)
-                      (request.resource.data.userId == 'AI_ASSISTANT' && 
-                       request.resource.data.userName == 'AI Helper'); 
-										
-      allow update: if
-                      // Case 1: Authenticated user updating their own message (and not trying to impersonate AI)
-                      (request.auth != null && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.userName != 'AI Helper') ||
-                      // Case 2: Server/AI updating an existing AI message (e.g., "Thinking..." to actual response)
-                      (resource.data.userId == 'AI_ASSISTANT' && request.resource.data.userId == 'AI_ASSISTANT' && 
-                       resource.data.userName == 'AI Helper' && request.resource.data.userName == 'AI Helper');
+    // Shared Note Links - public read for link ID, only owner creates/deletes
+    match /sharedNoteLinks/{linkId} {
+      allow read: if true; // Anyone with the linkId can read it to get noteId and ownerUid
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid; 
+      // No update needed for links, they are static references
+    }
+    
+    // Admin Configuration
+    match /adminConfig/{configDocId} {
+      allow read: if request.auth != null; // Any authenticated user can read (e.g., flows reading model ID)
+      allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write
+    }
 
-      // Delete only if user owns the message (AI messages are not user-deletable by this rule, nor are other users' messages)
-      allow delete: if request.auth != null && resource.data.userId == request.auth.uid && resource.data.userName != 'AI Helper';
+     // System Agents (like AI Helper profile)
+    match /systemAgents/{agentId} {
+      allow read: if true; // Publicly readable (e.g., by study room to get AI helper details)
+      allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write/update these profiles
     }
   }
 }
