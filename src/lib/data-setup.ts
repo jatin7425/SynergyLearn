@@ -1,6 +1,4 @@
 
-'use server'; // Can be called from server components/actions if needed, but here used from client.
-
 import { db } from '@/lib/firebase';
 import { doc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 
@@ -29,8 +27,8 @@ export async function ensureAIHelperProfileExists(): Promise<{ success: boolean,
     const profileRef = doc(db, AI_PROFILE_COLLECTION, AI_PROFILE_ID);
     // Using set with merge:true will create or update.
     // For creation, explicitly add createdAt.
-    await setDoc(profileRef, { 
-        ...profileData, 
+    await setDoc(profileRef, {
+        ...profileData,
         updatedAt: serverTimestamp(),
         // Add createdAt only if it's a new document (Firestore handles this with serverTimestamp on creation)
         // For simplicity with set and merge, we can just always set/update `updatedAt`.
