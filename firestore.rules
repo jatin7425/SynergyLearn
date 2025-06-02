@@ -4,9 +4,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule applies to user-specific subcollections like 'profile', 'milestones', 
-    // 'studyCollections', 'schedule', 'timeTrackingLogs', etc.,
-    // unless a more specific rule below (like for 'notes') overrides it.
+    // User-specific data (notes, milestones, studyCollections, profile data, schedule, time tracking)
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
@@ -19,15 +17,13 @@ service cloud.firestore {
       allow write, delete: if request.auth != null && request.auth.uid == userId;
     }
     
-    // UserProfiles collection (for searching users by email)
-    match /userProfiles/{profileUserId} {
-        allow read: if request.auth != null;
-        allow create: if request.auth != null && request.auth.uid == profileUserId && request.resource.data.uid == request.auth.uid;
-        // Allow owner to update display Name and photoURL, but not UID or email.
-        allow update: if request.auth != null && request.auth.uid == profileUserId
-                        && !(request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'email', 'createdAt'])); 
+    // User Profiles (accessible by anyone for public info like display name/avatar, but only owner can write)
+    // This is a more specific rule for the 'profile' subcollection within users.
+    match /users/{userId}/profile/{profileDocId} {
+      allow read: if true; // Publicly readable for display names, avatars etc.
+      allow write: if request.auth != null && request.auth.uid == userId; // Only owner can write
     }
-        
+    
     // Shared Note Links
     match /sharedNoteLinks/{linkId} {
       // Authenticated users can read a link document to resolve it
@@ -46,7 +42,17 @@ service cloud.firestore {
       allow read: if request.auth != null;
       // Allow creation/update only if the agentId is the specific AI_PROFILE_ID
       // and from an authenticated user (e.g., admin action from settings page)
+      // In a real app, you'd restrict write to specific admin UIDs.
       allow write: if request.auth != null && agentId == 'AI_ASSISTANT_MAIN';
+    }
+
+    // Admin Configuration
+    match /adminConfig/{configDocId} {
+      // For now, allow any authenticated user to manage for ease of testing.
+      // In a real app, this would be restricted to admin UIDs:
+      // allow read, write: if request.auth != null && request.auth.token.admin == true;
+      // Or: allow read, write: if request.auth != null && request.auth.uid in ['admin_uid_1', 'admin_uid_2'];
+      allow read, write: if request.auth != null;
     }
 
     // Study Rooms
@@ -58,14 +64,14 @@ service cloud.firestore {
 
       // Creator can update anything.
       // Non-creators can update specific fields: members, memberCount, whiteboardDrawing, and updatedAt.
+      // This allows users to join/leave (modifying members and memberCount) and draw on the whiteboard.
       allow update: if request.auth != null && 
                       (
                         resource.data.createdBy == request.auth.uid || 
                         (
-                          // Non-creators can only modify these specific fields
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt'])) || // For join/leave
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt'])) || // For whiteboard only
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt'])) // For join/leave + whiteboard
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'whiteboardDrawing', 'updatedAt']) ||
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt']) || // For join/leave
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteboardDrawing', 'updatedAt']) // For whiteboard
                         )
                       );
                       

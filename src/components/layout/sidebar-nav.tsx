@@ -17,7 +17,8 @@ import {
   Award,
   CalendarClock,
   MapPin,
-  LifeBuoy, // Added LifeBuoy
+  LifeBuoy, 
+  ShieldCheck, // Added for Admin
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -44,10 +45,18 @@ const navItems = [
     subItems: [
       { href: '/ai/milestone-suggestions', label: 'Milestone Suggestions', icon: Lightbulb },
       { href: '/ai/flashcard-generator', label: 'Flashcard Generator', icon: HelpCircle },
-      { href: '/ai/support-bot', label: 'Support Bot', icon: LifeBuoy }, // New Support Bot link
+      { href: '/ai/support-bot', label: 'Support Bot', icon: LifeBuoy }, 
     ],
   },
   { href: '/settings', label: 'Settings', icon: Settings },
+  // Admin Section - Consider adding role-based visibility in a real app
+  {
+    label: 'Admin',
+    icon: ShieldCheck,
+    subItems: [
+        { href: '/admin/model-settings', label: 'Model Settings', icon: Sparkles },
+    ],
+  }
 ];
 
 export default function SidebarNav() {
@@ -62,7 +71,6 @@ export default function SidebarNav() {
               <SidebarMenuButton
                 tooltip={{ children: item.label }}
                 className={cn(
-                  // Check if any subItem href is a prefix of the current pathname
                   item.subItems.some(sub => pathname.startsWith(sub.href)) && 'bg-sidebar-accent text-sidebar-accent-foreground'
                 )}
                 isActive={item.subItems.some(sub => pathname === sub.href)}

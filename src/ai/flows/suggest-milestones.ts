@@ -12,7 +12,12 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-import { routeQueryToModel, type UserQueryInput } from './route-query-flow'; // Import the router
+// import { routeQueryToModel, type UserQueryInput } from './route-query-flow'; // Router flow is temporarily bypassed for admin config
+import { db } from '@/lib/firebase'; // Import Firestore
+import { doc, getDoc } from 'firebase/firestore'; // Import Firestore functions
+
+const MODEL_CONFIG_PATH = 'adminConfig/modelSelection';
+const DEFAULT_MODEL_ID = 'googleai/gemini-2.0-flash'; // Fallback model
 
 const SuggestLearningMilestonesInputSchema = z.object({
   goal: z.string().describe('The overall learning goal of the user.'),
@@ -25,7 +30,7 @@ export type SuggestLearningMilestonesInput = z.infer<typeof SuggestLearningMiles
 const SuggestLearningMilestonesOutputSchema = z.object({
   milestones: z.array(z.string()).describe('A list of suggested learning milestones.'),
   modelUsed: z.string().optional().describe('The model that was used to generate the milestones.'),
-  routingReason: z.string().optional().describe('Reason for choosing the model.'),
+  routingReason: z.string().optional().describe('Reason for choosing the model (e.g., Admin configured, Fallback).'),
 });
 
 export type SuggestLearningMilestonesOutput = z.infer<typeof SuggestLearningMilestonesOutputSchema>;
@@ -34,8 +39,6 @@ export async function suggestLearningMilestones(input: SuggestLearningMilestones
   return suggestLearningMilestonesFlow(input);
 }
 
-// Note: The 'model' field in definePrompt sets a default if not overridden at call time.
-// We will override it dynamically based on the router's decision.
 const suggestLearningMilestonesPrompt = ai.definePrompt({
   name: 'suggestLearningMilestonesPrompt',
   input: {schema: SuggestLearningMilestonesInputSchema},
@@ -59,23 +62,40 @@ const suggestLearningMilestonesFlow = ai.defineFlow(
     outputSchema: SuggestLearningMilestonesOutputSchema,
   },
   async (input) => {
-    // 1. Route the query to decide which model to use
-    const routerInput: UserQueryInput = { queryText: `Suggest learning milestones for the goal: "${input.goal}" considering current skills: "${input.currentSkills}" and preferences: "${input.learningPreferences}"` };
-    const modelDecision = await routeQueryToModel(routerInput);
-    const selectedModelName = modelDecision.modelName;
-    const routingReason = modelDecision.reason;
+    let selectedModelName = DEFAULT_MODEL_ID;
+    let routingReason = `Fallback to default model: ${DEFAULT_MODEL_ID}`;
 
-    console.log(`SuggestMilestones: Routed to use Hugging Face model: ${selectedModelName} because: ${routingReason}`);
-    console.log(`SuggestMilestones: NOTE - Using '${selectedModelName}' with ai.definePrompt will likely fail unless a Genkit plugin registers it. Next step would be to use Hugging Face Inference API directly.`);
-
-    // 2. Call the main prompt using the selected model
-    // This will likely fail if selectedModelName is a Hugging Face model ID not registered with Genkit.
-    // For a full implementation, this part would need to change to a direct fetch call to Hugging Face Inference API.
+    try {
+      const configDocRef = doc(db, MODEL_CONFIG_PATH);
+      const docSnap = await getDoc(configDocRef);
+      if (docSnap.exists() && docSnap.data()?.activeModelId) {
+        selectedModelName = docSnap.data()?.activeModelId;
+        routingReason = `Admin configured model: ${selectedModelName}`;
+        console.log(`SuggestMilestones: Using admin configured model: ${selectedModelName}`);
+      } else {
+        console.log(`SuggestMilestones: No admin model config found at ${MODEL_CONFIG_PATH}. Using fallback: ${DEFAULT_MODEL_ID}`);
+      }
+    } catch (error) {
+      console.error(`SuggestMilestones: Error fetching admin model config. Using fallback. Error: ${(error as Error).message}`);
+      // selectedModelName and routingReason remain as default
+    }
+    
+    // If the selected model is a Hugging Face model (heuristic: contains '/'), log a note.
+    // Actual execution with HF models may require direct API calls.
+    if (selectedModelName.includes('/') && !selectedModelName.startsWith('googleai/') && !selectedModelName.startsWith('ollama/')) {
+      console.log(`SuggestMilestones: NOTE - Model '${selectedModelName}' appears to be a Hugging Face model. Direct Genkit ai.generate() may not work without a specific plugin. This flow will attempt to use it, but further integration for HF API might be needed.`);
+      // For now, we still pass it to ai.generate. If a plugin is set up for this HF model type, it might work.
+      // Otherwise, this is where custom fetch logic to HF Inference API would go.
+    }
+    
     const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any }); 
     
     if (!output) {
-      // Handle case where prompt might not return expected output
-      return { milestones: ["Failed to generate milestones. The selected Hugging Face model may not be directly usable by Genkit's default prompt mechanism."], modelUsed: selectedModelName, routingReason };
+      return { 
+        milestones: ["Failed to generate milestones. The selected model may not be available or compatible with Genkit's default prompt mechanism."], 
+        modelUsed: selectedModelName, 
+        routingReason: `${routingReason} - Generation failed.`
+      };
     }
     
     return { ...output, modelUsed: selectedModelName, routingReason };
