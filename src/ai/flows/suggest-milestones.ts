@@ -65,16 +65,20 @@ const suggestLearningMilestonesFlow = ai.defineFlow(
     const selectedModelName = modelDecision.modelName;
     const routingReason = modelDecision.reason;
 
-    console.log(`SuggestMilestones: Routed to use model: ${selectedModelName} because: ${routingReason}`);
+    console.log(`SuggestMilestones: Routed to use Hugging Face model: ${selectedModelName} because: ${routingReason}`);
+    console.log(`SuggestMilestones: NOTE - Using '${selectedModelName}' with ai.definePrompt will likely fail unless a Genkit plugin registers it. Next step would be to use Hugging Face Inference API directly.`);
 
     // 2. Call the main prompt using the selected model
-    const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any }); // Cast to any if specific model type isn't directly compatible
+    // This will likely fail if selectedModelName is a Hugging Face model ID not registered with Genkit.
+    // For a full implementation, this part would need to change to a direct fetch call to Hugging Face Inference API.
+    const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any }); 
     
     if (!output) {
       // Handle case where prompt might not return expected output
-      return { milestones: ["Failed to generate milestones."], modelUsed: selectedModelName, routingReason };
+      return { milestones: ["Failed to generate milestones. The selected Hugging Face model may not be directly usable by Genkit's default prompt mechanism."], modelUsed: selectedModelName, routingReason };
     }
     
     return { ...output, modelUsed: selectedModelName, routingReason };
   }
 );
+
