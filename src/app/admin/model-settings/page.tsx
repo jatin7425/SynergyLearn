@@ -19,7 +19,7 @@ const MODEL_CONFIG_PATH = 'adminConfig/modelSelection';
 // !!! IMPORTANT: For a real application, replace this with your actual admin UID !!!
 // This is a placeholder for client-side prototype demonstration.
 // Secure admin access should be managed via backend logic or Firebase Custom Claims and Firestore Rules.
-const ADMIN_UID = 'REPLACE_WITH_YOUR_ADMIN_USER_ID';
+const ADMIN_UID = 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
 
 export default function ModelSettingsPage() {
   const { user, loading: authLoading } = useAuth();
