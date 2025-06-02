@@ -12,12 +12,11 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-// import { routeQueryToModel, type UserQueryInput } from './route-query-flow'; // Router flow is temporarily bypassed for admin config
-import { db } from '@/lib/firebase'; // Import Firestore
-import { doc, getDoc } from 'firebase/firestore'; // Import Firestore functions
+import { db } from '@/lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 const MODEL_CONFIG_PATH = 'adminConfig/modelSelection';
-const DEFAULT_MODEL_ID = 'googleai/gemini-2.0-flash'; // Fallback model
+const DEFAULT_MODEL_ID = 'googleai/gemini-2.0-flash'; // Fallback Genkit model
 
 const SuggestLearningMilestonesInputSchema = z.object({
   goal: z.string().describe('The overall learning goal of the user.'),
@@ -30,7 +29,7 @@ export type SuggestLearningMilestonesInput = z.infer<typeof SuggestLearningMiles
 const SuggestLearningMilestonesOutputSchema = z.object({
   milestones: z.array(z.string()).describe('A list of suggested learning milestones.'),
   modelUsed: z.string().optional().describe('The model that was used to generate the milestones.'),
-  routingReason: z.string().optional().describe('Reason for choosing the model (e.g., Admin configured, Fallback).'),
+  routingReason: z.string().optional().describe('Reason for choosing the model (e.g., Admin configured, Fallback, Local HF, Public HF).'),
 });
 
 export type SuggestLearningMilestonesOutput = z.infer<typeof SuggestLearningMilestonesOutputSchema>;
@@ -42,7 +41,9 @@ export async function suggestLearningMilestones(input: SuggestLearningMilestones
 const suggestLearningMilestonesPrompt = ai.definePrompt({
   name: 'suggestLearningMilestonesPrompt',
   input: {schema: SuggestLearningMilestonesInputSchema},
-  output: {schema: SuggestLearningMilestonesOutputSchema.omit({ modelUsed: true, routingReason: true })}, // Prompt's direct output schema
+  // This specific output schema is for when Genkit's prompt is used directly.
+  // HF API will return a different structure that we parse.
+  output: {schema: z.object({ milestones: z.array(z.string()) }) },
   prompt: `You are an AI learning assistant. Your goal is to help users achieve their learning goals by suggesting a list of milestones.
 
   Consider the user's current skills, learning preferences, and overall goal when suggesting milestones.
@@ -63,7 +64,8 @@ const suggestLearningMilestonesFlow = ai.defineFlow(
   },
   async (input) => {
     let selectedModelName = DEFAULT_MODEL_ID;
-    let routingReason = `Fallback to default model: ${DEFAULT_MODEL_ID}`;
+    let routingReason = `Fallback to default Genkit model: ${DEFAULT_MODEL_ID}`;
+    let generatedMilestones: string[] = ["Failed to generate milestones."];
 
     try {
       const configDocRef = doc(db, MODEL_CONFIG_PATH);
@@ -73,32 +75,106 @@ const suggestLearningMilestonesFlow = ai.defineFlow(
         routingReason = `Admin configured model: ${selectedModelName}`;
         console.log(`SuggestMilestones: Using admin configured model: ${selectedModelName}`);
       } else {
-        console.log(`SuggestMilestones: No admin model config found at ${MODEL_CONFIG_PATH}. Using fallback: ${DEFAULT_MODEL_ID}`);
+        console.log(`SuggestMilestones: No admin model config found at ${MODEL_CONFIG_PATH}. Using fallback Genkit model: ${DEFAULT_MODEL_ID}`);
       }
     } catch (error) {
       console.error(`SuggestMilestones: Error fetching admin model config. Using fallback. Error: ${(error as Error).message}`);
-      // selectedModelName and routingReason remain as default
     }
-    
-    // If the selected model is a Hugging Face model (heuristic: contains '/'), log a note.
-    // Actual execution with HF models may require direct API calls.
-    if (selectedModelName.includes('/') && !selectedModelName.startsWith('googleai/') && !selectedModelName.startsWith('ollama/')) {
-      console.log(`SuggestMilestones: NOTE - Model '${selectedModelName}' appears to be a Hugging Face model. Direct Genkit ai.generate() may not work without a specific plugin. This flow will attempt to use it, but further integration for HF API might be needed.`);
-      // For now, we still pass it to ai.generate. If a plugin is set up for this HF model type, it might work.
-      // Otherwise, this is where custom fetch logic to HF Inference API would go.
+
+    const isHuggingFaceModel = selectedModelName.includes('/') && !selectedModelName.startsWith('googleai/') && !selectedModelName.startsWith('ollama/');
+    const localHfApiUrl = process.env.LOCAL_HUGGING_FACE_API_URL;
+    const publicHfApiKey = process.env.HUGGING_FACE_API_KEY;
+
+    if (isHuggingFaceModel) {
+      const hfPrompt = `Based on the following learning goal, current skills, and learning preferences, suggest a list of 5-7 concise learning milestones. Each milestone should be on a new line.
+Goal: ${input.goal}
+Current Skills: ${input.currentSkills || 'Not specified'}
+Learning Preferences: ${input.learningPreferences || 'Not specified'}
+
+Suggested Milestones:`;
+
+      if (localHfApiUrl) {
+        console.log(`SuggestMilestones: Attempting to use Local Hugging Face API for model: ${selectedModelName} at ${localHfApiUrl}`);
+        routingReason = `Local Hugging Face API: ${selectedModelName}`;
+        try {
+          const response = await fetch(localHfApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: selectedModelName, prompt: hfPrompt }),
+          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Local HF API request failed with status ${response.status}: ${errorText}`);
+          }
+          const result = await response.json();
+          if (result.generated_text) {
+            generatedMilestones = result.generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
+          } else {
+            console.error("Local HF API response did not contain 'generated_text'. Response:", result);
+            generatedMilestones = ["Local HF API did not return expected format."];
+          }
+        } catch (hfError) {
+          console.error(`SuggestMilestones: Error calling Local Hugging Face API. Error: ${(hfError as Error).message}`);
+          generatedMilestones = [`Error with Local HF API: ${(hfError as Error).message}`];
+        }
+      } else if (publicHfApiKey) {
+        console.log(`SuggestMilestones: Attempting to use Public Hugging Face Inference API for model: ${selectedModelName}`);
+        routingReason = `Public Hugging Face API: ${selectedModelName}`;
+        try {
+          const response = await fetch(`https://api-inference.huggingface.co/models/${selectedModelName}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${publicHfApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ inputs: hfPrompt, parameters: { return_full_text: false, max_new_tokens: 200 } }),
+          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Public HF API request failed with status ${response.status}: ${errorText}`);
+          }
+          const result = await response.json();
+          // HF API often returns an array with one object containing generated_text
+          if (Array.isArray(result) && result[0] && result[0].generated_text) {
+            generatedMilestones = result[0].generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
+          } else if (result.generated_text) { // Some models might return it directly
+             generatedMilestones = result.generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
+          } else {
+            console.error("Public HF API response did not contain 'generated_text'. Response:", result);
+            generatedMilestones = ["Public HF API did not return expected format."];
+          }
+        } catch (hfError) {
+          console.error(`SuggestMilestones: Error calling Public Hugging Face API. Error: ${(hfError as Error).message}`);
+          generatedMilestones = [`Error with Public HF API: ${(hfError as Error).message}`];
+        }
+      } else {
+        console.warn(`SuggestMilestones: Hugging Face model ${selectedModelName} selected, but no LOCAL_HUGGING_FACE_API_URL or HUGGING_FACE_API_KEY is configured. Falling back to Genkit default for now, but this is likely not what you want for HF.`);
+        routingReason = `HF Model ${selectedModelName} chosen, but no API key/local URL. Using Genkit default.`;
+        // Fall through to Genkit prompt as a last resort if HF config is missing
+        try {
+          const {output} = await suggestLearningMilestonesPrompt(input, { model: DEFAULT_MODEL_ID as any });
+          if (output?.milestones) {
+            generatedMilestones = output.milestones;
+          }
+        } catch (genkitError) {
+           console.error(`SuggestMilestones: Error with Genkit fallback. Error: ${(genkitError as Error).message}`);
+           generatedMilestones = [`Genkit fallback failed: ${(genkitError as Error).message}`];
+        }
+      }
+    } else {
+      // Use Genkit's ai.generate() for Google AI or Ollama models
+      console.log(`SuggestMilestones: Using Genkit provider for model: ${selectedModelName}`);
+      try {
+        const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any });
+        if (output?.milestones) {
+            generatedMilestones = output.milestones;
+        }
+      } catch (genkitError) {
+        console.error(`SuggestMilestones: Error with Genkit model ${selectedModelName}. Error: ${(genkitError as Error).message}`);
+        generatedMilestones = [`Error with ${selectedModelName}: ${(genkitError as Error).message}`];
+      }
     }
-    
-    const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any }); 
-    
-    if (!output) {
-      return { 
-        milestones: ["Failed to generate milestones. The selected model may not be available or compatible with Genkit's default prompt mechanism."], 
-        modelUsed: selectedModelName, 
-        routingReason: `${routingReason} - Generation failed.`
-      };
-    }
-    
-    return { ...output, modelUsed: selectedModelName, routingReason };
+
+    return { milestones: generatedMilestones, modelUsed: selectedModelName, routingReason };
   }
 );
-
