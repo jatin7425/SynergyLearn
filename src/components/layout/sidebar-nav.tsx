@@ -19,7 +19,7 @@ import {
   MapPin,
   LifeBuoy, 
   ShieldCheck, 
-  UserCog, // Icon for User Management
+  UserCog,
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -29,8 +29,12 @@ import {
   SidebarMenuSubButton,
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 
-const navItems = [
+// Define the admin UID here or import from a shared config
+const ADMIN_UID = 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
+
+const navItemsBase = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/roadmap', label: 'Roadmap', icon: GitFork },
   { href: '/progress-map', label: 'Progress Map', icon: MapPin },
@@ -50,7 +54,9 @@ const navItems = [
     ],
   },
   { href: '/settings', label: 'Settings', icon: Settings },
-  // Admin Section - Consider adding role-based visibility in a real app
+];
+
+const adminNavItems = [
   {
     label: 'Admin',
     icon: ShieldCheck,
@@ -63,10 +69,13 @@ const navItems = [
 
 export default function SidebarNav() {
   const pathname = usePathname();
+  const { user } = useAuth(); // Get current user from AuthContext
+
+  const currentNavItems = user?.uid === ADMIN_UID ? [...navItemsBase, ...adminNavItems] : navItemsBase;
 
   return (
     <>
-      {navItems.map((item) => (
+      {currentNavItems.map((item) => (
         <SidebarMenuItem key={item.label}>
           {item.subItems ? (
             <>
