@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Zap, AlertCircle, CalendarDays, Clock, Coffee, Utensils, Play, Pause, ListChecks, CalendarPlus, TargetIcon } from 'lucide-react';
-import { useState, type FormEvent, useEffect, useCallback } from 'react';
+import { useState, type FormEvent, useEffect, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -48,12 +48,12 @@ interface TimeTrackingState {
 }
 
 interface TimeLog {
-    id?: string;
-    type: 'study_session_start' | 'study_session_end';
-    startTime: Timestamp;
-    endTime: Timestamp | null;
-    durationMinutes: number;
-    activities: Array<{type: string, timestamp: Timestamp}>;
+  id?: string;
+  type: 'study_session_start' | 'study_session_end';
+  startTime: Timestamp;
+  endTime: Timestamp | null;
+  durationMinutes: number;
+  activities: Array<{ type: string, timestamp: Timestamp }>;
 }
 
 
@@ -92,28 +92,30 @@ const parseDurationStringToMinutes = (durationStr?: string): number => {
       totalMinutes += parseInt(fullMatch[2], 10);
     }
     // If neither hours nor minutes were matched but there was a full match (e.g. "Rest Day"), return 0
-    if (totalMinutes > 0) return Math.round(totalMinutes);
+    if (totalMinutes > 0) {
+      return Math.round(totalMinutes);
+    }
   }
-  
+
   // If no explicit "hours" or "minutes" were found, try to parse a single number
   // This is less reliable and assumes AI gives explicit units.
   // If AI says "2.5", assume hours. If AI says "150", assume minutes if it is a large number.
   const singleNumberMatch = durationLowerCase.match(/^(\d*\.?\d+)$/);
   if (singleNumberMatch && singleNumberMatch[1]) {
-      const num = parseFloat(singleNumberMatch[1]);
-      if (!isNaN(num)) {
-          // Heuristic: if number < 10 and has decimal, or < 5, assume hours. Else assume minutes.
-          if ((num < 10 && durationStr.includes('.')) || num <= 5) {
-              totalMinutes = num * 60;
-          } else {
-              totalMinutes = num;
-          }
-          return Math.round(totalMinutes);
+    const num = parseFloat(singleNumberMatch[1]);
+    if (!isNaN(num)) {
+      // Heuristic: if number < 10 and has decimal, or < 5, assume hours. Else assume minutes.
+      if ((num < 10 && durationStr.includes('.')) || num <= 5) {
+        totalMinutes = num * 60;
+      } else {
+        totalMinutes = num;
       }
+      return Math.round(totalMinutes);
+    }
   }
-  
+
   // If it's a non-parsable string like "Rest Day" or "Flexible", it will return 0.
-  return 0; 
+  return 0;
 };
 
 
@@ -136,6 +138,7 @@ export default function SchedulePage() {
   const [isLoadingDailyTasksForWeek, setIsLoadingDailyTasksForWeek] = useState<number | null>(null);
 
   const [activeMainTab, setActiveMainTab] = useState<string>("configure");
+  const hasAutoSwitchedTab = useRef(false);
   const [selectedWeekNumberForDetails, setSelectedWeekNumberForDetails] = useState<number | null>(null);
 
   const [isLoadingStoredSchedule, setIsLoadingStoredSchedule] = useState(true);
@@ -148,7 +151,7 @@ export default function SchedulePage() {
   const [currentSessionDisplay, setCurrentSessionDisplay] = useState("00:00:00");
   const [currentBreakDisplay, setCurrentBreakDisplay] = useState("00:00:00");
   const [currentLunchDisplay, setCurrentLunchDisplay] = useState("00:00:00");
-  
+
   const [totalMinutesStudiedToday, setTotalMinutesStudiedToday] = useState(0);
   const [totalEstimatedMinutesForToday, setTotalEstimatedMinutesForToday] = useState(0);
   const [timeDifferenceDisplay, setTimeDifferenceDisplay] = useState("Calculating...");
@@ -195,20 +198,23 @@ export default function SchedulePage() {
         setHolidayStartTime(data.holidayStartTime || '');
         setHolidayEndTime(data.holidayEndTime || '');
         setUtilizeHolidays(data.utilizeHolidays || false);
-        
+
         if ((data.weeklyOutline || []).length > 0) {
-            if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
-              setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
-            }
-            if (activeMainTab === "configure" && data.weeklyOutline.length > 0) {
-                 setActiveMainTab("weeklyDetails");
-            }
+          if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
+            setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
+          }
+
+          // ✅ only switch automatically once
+          if (!hasAutoSwitchedTab.current) {
+            hasAutoSwitchedTab.current = true;
+            setActiveMainTab("weeklyDetails");
+          }
         } else {
-            setSelectedWeekNumberForDetails(null);
-            if (activeMainTab === "weeklyDetails") {
-                setActiveMainTab("configure");
-            }
+          setSelectedWeekNumberForDetails(null);
+          setActiveMainTab("configure");
+          hasAutoSwitchedTab.current = false; // allow switching again if schedule gets cleared
         }
+
       } else {
         setStoredScheduleData(null);
         setSelectedWeekNumberForDetails(null);
@@ -231,13 +237,13 @@ export default function SchedulePage() {
           if (!logDocSnap.exists()) {
             console.warn(`Log document ${fetchedState.currentSessionId} not found. Resetting time tracking state.`);
             const correctedState: TimeTrackingState = { status: 'clocked_out', currentSessionId: null, lastClockInTime: null, lastBreakStartTime: null, lastLunchStartTime: null };
-            await setDoc(timeStateDocRef, correctedState); 
-            setTimeTrackingState(correctedState); 
+            await setDoc(timeStateDocRef, correctedState);
+            setTimeTrackingState(correctedState);
           } else {
-            setTimeTrackingState(fetchedState); 
+            setTimeTrackingState(fetchedState);
           }
         } else {
-          setTimeTrackingState(fetchedState); 
+          setTimeTrackingState(fetchedState);
         }
       } else {
         const initialTimeState: TimeTrackingState = { status: 'clocked_out' };
@@ -274,8 +280,8 @@ export default function SchedulePage() {
           setCurrentBreakDisplay(formatDuration(elapsedSeconds, 'hms'));
         }, 1000);
         if (timeTrackingState.lastClockInTime) {
-            const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
-            setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
+          const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
+          setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
         }
       } else if (timeTrackingState.status === 'on_lunch' && timeTrackingState.lastLunchStartTime) {
         intervalId = setInterval(() => {
@@ -283,8 +289,8 @@ export default function SchedulePage() {
           setCurrentLunchDisplay(formatDuration(elapsedSeconds, 'hms'));
         }, 1000);
         if (timeTrackingState.lastClockInTime) {
-            const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
-            setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
+          const sessionElapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
+          setCurrentSessionDisplay(formatDuration(sessionElapsedSeconds, 'hms'));
         }
       } else {
         setCurrentSessionDisplay("00:00:00");
@@ -304,47 +310,47 @@ export default function SchedulePage() {
     const today_end = endOfDay(new Date());
 
     const logsCollectionRef = collection(db, 'users', user.uid, 'timeTrackingLogs');
-    const q = query(logsCollectionRef, 
-                    where('startTime', '>=', Timestamp.fromDate(today_start)),
-                    where('startTime', '<=', Timestamp.fromDate(today_end))
-                   );
+    const q = query(logsCollectionRef,
+      where('startTime', '>=', Timestamp.fromDate(today_start)),
+      where('startTime', '<=', Timestamp.fromDate(today_end))
+    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let accumulatedMinutesToday = 0;
       snapshot.forEach((doc) => {
         const log = doc.data() as TimeLog;
-        if (log.endTime && log.durationMinutes) { 
+        if (log.endTime && log.durationMinutes) {
           accumulatedMinutesToday += log.durationMinutes;
         }
       });
-      
+
       if (timeTrackingState?.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
-          const liveSessionSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime.toDate());
-          // Add only the current session's portion that hasn't been logged yet if it's still active.
-          // This logic needs to be careful not to double count if a log for this session already partially exists.
-          // For simplicity, if clocked_in, this adds the live part of the current session to already logged parts.
-          // If handleClockOut correctly logs the full duration, this might slightly over-count during the final second before clock out.
-          // A more robust way would be to exclude the currentSessionId from the sum if it's active.
-          // However, the current query is for *all* logs *today*.
+        const liveSessionSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime.toDate());
+        // Add only the current session's portion that hasn't been logged yet if it's still active.
+        // This logic needs to be careful not to double count if a log for this session already partially exists.
+        // For simplicity, if clocked_in, this adds the live part of the current session to already logged parts.
+        // If handleClockOut correctly logs the full duration, this might slightly over-count during the final second before clock out.
+        // A more robust way would be to exclude the currentSessionId from the sum if it's active.
+        // However, the current query is for *all* logs *today*.
 
-          // Let's assume durationMinutes in the log is the final one.
-          // If currentSessionId matches a log, subtract its durationMinutes (if any)
-          // and add the live calculation. This prevents double counting.
+        // Let's assume durationMinutes in the log is the final one.
+        // If currentSessionId matches a log, subtract its durationMinutes (if any)
+        // and add the live calculation. This prevents double counting.
 
-          let liveMinutes = Math.floor(liveSessionSeconds / 60);
+        let liveMinutes = Math.floor(liveSessionSeconds / 60);
 
-          if (timeTrackingState.currentSessionId) {
-            const currentSessionLog = snapshot.docs.find(d => d.id === timeTrackingState.currentSessionId)?.data() as TimeLog | undefined;
-            if (currentSessionLog && currentSessionLog.durationMinutes && !currentSessionLog.endTime) {
-              // Current session is in logs but not ended. Don't add its partial durationMinutes from DB.
-              // The `accumulatedMinutesToday` would have already added it if it was completed.
-              // So, just add liveMinutes to sum of *other* completed sessions.
-            }
+        if (timeTrackingState.currentSessionId) {
+          const currentSessionLog = snapshot.docs.find(d => d.id === timeTrackingState.currentSessionId)?.data() as TimeLog | undefined;
+          if (currentSessionLog && currentSessionLog.durationMinutes && !currentSessionLog.endTime) {
+            // Current session is in logs but not ended. Don't add its partial durationMinutes from DB.
+            // The `accumulatedMinutesToday` would have already added it if it was completed.
+            // So, just add liveMinutes to sum of *other* completed sessions.
           }
-          setTotalMinutesStudiedToday(accumulatedMinutesToday + liveMinutes);
+        }
+        setTotalMinutesStudiedToday(accumulatedMinutesToday + liveMinutes);
 
       } else {
-         setTotalMinutesStudiedToday(accumulatedMinutesToday);
+        setTotalMinutesStudiedToday(accumulatedMinutesToday);
       }
     });
 
@@ -354,8 +360,8 @@ export default function SchedulePage() {
   // Effect for "Time to Cover / Overtime"
   useEffect(() => {
     if (!user || isLoadingStoredSchedule) {
-        setTimeDifferenceDisplay("Calculating...");
-        return;
+      setTimeDifferenceDisplay("Calculating...");
+      return;
     }
 
     const today = new Date();
@@ -364,47 +370,47 @@ export default function SchedulePage() {
     let statusMessage = "Calculating...";
 
     if (storedScheduleData?.weeklyOutline) {
-        const currentWeekData = storedScheduleData.weeklyOutline.find(week => {
-            const weekStart = parseISO(week.startDate);
-            const weekEnd = parseISO(week.endDate); // date-fns isWithinInterval is inclusive of start, exclusive of end by default
-            return isWithinInterval(today, { start: weekStart, end: addDays(weekEnd, 1) });
-        });
+      const currentWeekData = storedScheduleData.weeklyOutline.find(week => {
+        const weekStart = parseISO(week.startDate);
+        const weekEnd = parseISO(week.endDate); // date-fns isWithinInterval is inclusive of start, exclusive of end by default
+        return isWithinInterval(today, { start: weekStart, end: addDays(weekEnd, 1) });
+      });
 
-        if (currentWeekData && currentWeekData.dailyTasks && currentWeekData.dailyTasks.length > 0) {
-            const todaysTasks = currentWeekData.dailyTasks.filter(task => task.date === todayFormatted && task.topic?.toLowerCase() !== "rest day");
-            
-            if (todaysTasks.length > 0) {
-                currentDayEstimatedMinutes = todaysTasks.reduce((sum, task) => sum + parseDurationStringToMinutes(task.estimatedDuration), 0);
-                setTotalEstimatedMinutesForToday(currentDayEstimatedMinutes);
+      if (currentWeekData && currentWeekData.dailyTasks && currentWeekData.dailyTasks.length > 0) {
+        const todaysTasks = currentWeekData.dailyTasks.filter(task => task.date === todayFormatted && task.topic?.toLowerCase() !== "rest day");
 
-                if (currentDayEstimatedMinutes === 0) { // Tasks might exist but have 0 duration (e.g. "Quick Review")
-                     statusMessage = "Today's tasks have no specific estimated time.";
-                } else {
-                    const difference = currentDayEstimatedMinutes - totalMinutesStudiedToday;
-                    if (totalMinutesStudiedToday === 0 && currentDayEstimatedMinutes > 0) {
-                         statusMessage = `${formatDuration(currentDayEstimatedMinutes * 60, 'hm')} scheduled today.`;
-                    } else if (difference < -10) { 
-                        statusMessage = `${formatDuration(Math.abs(difference) * 60, 'hm')} overtime! Great job!`;
-                    } else if (difference > 10) { 
-                        statusMessage = `${formatDuration(difference * 60, 'hm')} to cover.`;
-                    } else {
-                        statusMessage = "On track for today!";
-                    }
-                }
+        if (todaysTasks.length > 0) {
+          currentDayEstimatedMinutes = todaysTasks.reduce((sum, task) => sum + parseDurationStringToMinutes(task.estimatedDuration), 0);
+          setTotalEstimatedMinutesForToday(currentDayEstimatedMinutes);
+
+          if (currentDayEstimatedMinutes === 0) { // Tasks might exist but have 0 duration (e.g. "Quick Review")
+            statusMessage = "Today's tasks have no specific estimated time.";
+          } else {
+            const difference = currentDayEstimatedMinutes - totalMinutesStudiedToday;
+            if (totalMinutesStudiedToday === 0 && currentDayEstimatedMinutes > 0) {
+              statusMessage = `${formatDuration(currentDayEstimatedMinutes * 60, 'hm')} scheduled today.`;
+            } else if (difference < -10) {
+              statusMessage = `${formatDuration(Math.abs(difference) * 60, 'hm')} overtime! Great job!`;
+            } else if (difference > 10) {
+              statusMessage = `${formatDuration(difference * 60, 'hm')} to cover.`;
             } else {
-                statusMessage = "No specific tasks scheduled for today (or it's a Rest Day).";
-                setTotalEstimatedMinutesForToday(0);
+              statusMessage = "On track for today!";
             }
-        } else if (currentWeekData) {
-            statusMessage = "Daily plan for the current week not generated yet.";
-            setTotalEstimatedMinutesForToday(0);
+          }
         } else {
-            statusMessage = "Current date not within any scheduled week.";
-            setTotalEstimatedMinutesForToday(0);
+          statusMessage = "No specific tasks scheduled for today (or it's a Rest Day).";
+          setTotalEstimatedMinutesForToday(0);
         }
-    } else {
-        statusMessage = "No schedule outline generated.";
+      } else if (currentWeekData) {
+        statusMessage = "Daily plan for the current week not generated yet.";
         setTotalEstimatedMinutesForToday(0);
+      } else {
+        statusMessage = "Current date not within any scheduled week.";
+        setTotalEstimatedMinutesForToday(0);
+      }
+    } else {
+      statusMessage = "No schedule outline generated.";
+      setTotalEstimatedMinutesForToday(0);
     }
     setTimeDifferenceDisplay(statusMessage);
 
@@ -420,7 +426,7 @@ export default function SchedulePage() {
     if (!user) return;
 
     setIsLoadingWeeklyOutline(true);
-    setSelectedWeekNumberForDetails(null); 
+    setSelectedWeekNumberForDetails(null);
 
     try {
       const startDateForOutline = format(new Date(), 'yyyy-MM-dd');
@@ -436,9 +442,9 @@ export default function SchedulePage() {
         startDateForOutline
       };
       const result: GenerateWeeklyOutlineOutput = await generateWeeklyOutline(input);
-      
-      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary || '' }));
-      
+
+      const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({ ...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary || '' }));
+
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       const dataToSave = {
         overallGoal: learningGoal,
@@ -456,7 +462,7 @@ export default function SchedulePage() {
       };
 
       await setDoc(scheduleDocRef, dataToSave, { merge: true });
-      
+
       if (outlineWithEmptyTasks.length > 0) {
         setSelectedWeekNumberForDetails(outlineWithEmptyTasks[0].weekNumber);
         setActiveMainTab("weeklyDetails");
@@ -491,13 +497,13 @@ export default function SchedulePage() {
       };
 
       const result: GenerateDailyTasksOutput = await generateDailyTasks(input);
-      
-      const updatedWeeklyOutline = storedScheduleData.weeklyOutline.map(w => 
-        w.weekNumber === week.weekNumber 
-        ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary || w.summary } 
-        : w
+
+      const updatedWeeklyOutline = storedScheduleData.weeklyOutline.map(w =>
+        w.weekNumber === week.weekNumber
+          ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary || w.summary }
+          : w
       );
-      
+
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       await updateDoc(scheduleDocRef, {
         weeklyOutline: updatedWeeklyOutline,
@@ -513,126 +519,128 @@ export default function SchedulePage() {
     }
   };
 
-   const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
+  const updateTimeTrackingState = async (newState: Partial<TimeTrackingState>) => {
     if (!user) return;
     const timeStateDocRef = doc(db, 'users', user.uid, 'timeTrackingState', 'currentState');
     try {
-        await setDoc(timeStateDocRef, newState, { merge: true });
+      await setDoc(timeStateDocRef, newState, { merge: true });
     } catch (error) {
-        console.error("Error updating time tracking state:", error);
-        toast({ title: "Time Tracking Error", description: "Could not update status.", variant: "destructive" });
+      console.error("Error updating time tracking state:", error);
+      toast({ title: "Time Tracking Error", description: "Could not update status.", variant: "destructive" });
     }
   };
-  
+
   const handleClockIn = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_out') return;
-    
-    const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id; 
+
+    const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id;
     const newLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', newSessionId);
     const newLog = {
-        type: 'study_session_start',
-        startTime: serverTimestamp(),
-        endTime: null,
-        durationMinutes: 0,
-        activities: []
+      type: 'study_session_start',
+      startTime: serverTimestamp(),
+      endTime: null,
+      durationMinutes: 0,
+      activities: []
     };
-    
+
     try {
-        await setDoc(newLogRef, newLog);
-        await updateTimeTrackingState({ 
-            status: 'clocked_in', 
-            lastClockInTime: Timestamp.now(), 
-            currentSessionId: newSessionId 
-        });
+      await setDoc(newLogRef, newLog);
+      await updateTimeTrackingState({
+        status: 'clocked_in',
+        lastClockInTime: Timestamp.now(),
+        currentSessionId: newSessionId
+      });
     } catch (error) {
-        console.error("Error clocking in:", error);
-        toast({ title: "Clock In Failed", description: (error as Error).message, variant: "destructive" });
+      console.error("Error clocking in:", error);
+      toast({ title: "Clock In Failed", description: (error as Error).message, variant: "destructive" });
     }
   };
 
   const handleClockOut = async () => {
-    if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId || !timeTrackingState.lastClockInTime) return;
-    
+    if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId || !timeTrackingState.lastClockInTime) {
+      return
+    };
+
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
-        const lastClockInDate = (timeTrackingState.lastClockInTime as Timestamp).toDate();
-        durationMinutes = Math.round((now.toMillis() - lastClockInDate.getTime()) / (1000 * 60));
+      const lastClockInDate = (timeTrackingState.lastClockInTime as Timestamp).toDate();
+      durationMinutes = Math.round((now.toMillis() - lastClockInDate.getTime()) / (1000 * 60));
     }
 
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
-        await updateDoc(sessionLogRef, {
-            endTime: now,
-            durationMinutes: durationMinutes
-        });
-        await updateTimeTrackingState({ 
-            status: 'clocked_out', 
-            lastClockInTime: null, 
-            currentSessionId: null,
-            lastBreakStartTime: null, // Clear break/lunch times on clock out
-            lastLunchStartTime: null
-        });
+      await updateDoc(sessionLogRef, {
+        endTime: now,
+        durationMinutes: durationMinutes
+      });
+      await updateTimeTrackingState({
+        status: 'clocked_out',
+        lastClockInTime: null,
+        currentSessionId: null,
+        lastBreakStartTime: null, // Clear break/lunch times on clock out
+        lastLunchStartTime: null
+      });
     } catch (error) {
-        console.error("Error clocking out:", error);
-        toast({ title: "Clock Out Failed", description: (error as Error).message, variant: "destructive" });
+      console.error("Error clocking out:", error);
+      toast({ title: "Clock Out Failed", description: (error as Error).message, variant: "destructive" });
     }
   };
-  
+
   const handleStartBreak = async () => {
-      if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
-      
-      const breakActivity = { type: 'break_start', timestamp: Timestamp.now() };
-      const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      try {
-        await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
-        await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: Timestamp.now() });
-      } catch (error) {
-        console.error("Error starting break:", error);
-        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
-      }
+    if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
+
+    const breakActivity = { type: 'break_start', timestamp: Timestamp.now() };
+    const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
+    try {
+      await updateDoc(sessionLogRef, { activities: arrayUnion(breakActivity) });
+      await updateTimeTrackingState({ status: 'on_break', lastBreakStartTime: Timestamp.now() });
+    } catch (error) {
+      console.error("Error starting break:", error);
+      toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
 
   const handleEndBreak = async () => {
-      if (!user || !timeTrackingState || timeTrackingState.status !== 'on_break' || !timeTrackingState.currentSessionId) return;
-      
-      const breakEndActivity = { type: 'break_end', timestamp: Timestamp.now() };
-      const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      try {
-        await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
-        await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
-      } catch (error) {
-        console.error("Error ending break:", error);
-        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
-      }
+    if (!user || !timeTrackingState || timeTrackingState.status !== 'on_break' || !timeTrackingState.currentSessionId) return;
+
+    const breakEndActivity = { type: 'break_end', timestamp: Timestamp.now() };
+    const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
+    try {
+      await updateDoc(sessionLogRef, { activities: arrayUnion(breakEndActivity) });
+      await updateTimeTrackingState({ status: 'clocked_in', lastBreakStartTime: null });
+    } catch (error) {
+      console.error("Error ending break:", error);
+      toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
-  
-   const handleStartLunch = async () => {
-      if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
-      
-      const lunchActivity = { type: 'lunch_start', timestamp: Timestamp.now() };
-      const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      try {
-        await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
-        await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: Timestamp.now() });
-      } catch (error) {
-        console.error("Error starting lunch:", error);
-        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
-      }
+
+  const handleStartLunch = async () => {
+    if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
+
+    const lunchActivity = { type: 'lunch_start', timestamp: Timestamp.now() };
+    const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
+    try {
+      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchActivity) });
+      await updateTimeTrackingState({ status: 'on_lunch', lastLunchStartTime: Timestamp.now() });
+    } catch (error) {
+      console.error("Error starting lunch:", error);
+      toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
 
   const handleEndLunch = async () => {
-      if (!user || !timeTrackingState || timeTrackingState.status !== 'on_lunch' || !timeTrackingState.currentSessionId) return;
-      
-      const lunchEndActivity = { type: 'lunch_end', timestamp: Timestamp.now() };
-      const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
-      try {
-        await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
-        await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
-      } catch (error) {
-        console.error("Error ending lunch:", error);
-        toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
-      }
+    if (!user || !timeTrackingState || timeTrackingState.status !== 'on_lunch' || !timeTrackingState.currentSessionId) return;
+
+    const lunchEndActivity = { type: 'lunch_end', timestamp: Timestamp.now() };
+    const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
+    try {
+      await updateDoc(sessionLogRef, { activities: arrayUnion(lunchEndActivity) });
+      await updateTimeTrackingState({ status: 'clocked_in', lastLunchStartTime: null });
+    } catch (error) {
+      console.error("Error ending lunch:", error);
+      toast({ title: "Action Failed", description: (error as Error).message, variant: "destructive" });
+    }
   };
 
   if (authLoading || isLoadingStoredSchedule || isLoadingTimeState) {
@@ -667,31 +675,34 @@ export default function SchedulePage() {
         title="Learning Schedule & Time Tracking"
         description="Define your learning plan and track your study sessions."
       />
-      
+
       <Card>
         <CardHeader>
-            <CardTitle className="flex items-center"><Clock className="mr-2 h-5 w-5 text-primary" /> Time Tracking</CardTitle>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-sm mt-2">
-                <p>Status: <span className="font-semibold capitalize">{timeTrackingState?.status.replace('_', ' ') || 'Loading...'}</span></p>
-                <p>Session: <span className="font-semibold">{currentSessionDisplay}</span></p>
-                {timeTrackingState?.status === 'on_break' && <p>On Break: <span className="font-semibold text-yellow-600 dark:text-yellow-400">{currentBreakDisplay}</span></p>}
-                {timeTrackingState?.status === 'on_lunch' && <p>On Lunch: <span className="font-semibold text-orange-600 dark:text-orange-400">{currentLunchDisplay}</span></p>}
-                <p>Studied Today: <span className="font-semibold text-green-600 dark:text-green-400">{formatDuration(totalMinutesStudiedToday * 60, 'hm')}</span></p>
-                <p>Target Today: <span className="font-semibold text-blue-600 dark:text-blue-400">{formatDuration(totalEstimatedMinutesForToday * 60, 'hm')}</span></p>
-                <p className="sm:col-span-2 lg:col-span-1">Progress: <span className="font-semibold text-purple-600 dark:text-purple-400">{timeDifferenceDisplay}</span></p>
-            </div>
+          <CardTitle className="flex items-center"><Clock className="mr-2 h-5 w-5 text-primary" /> Time Tracking</CardTitle>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-sm mt-2">
+            <p>Status: <span className="font-semibold capitalize">{timeTrackingState?.status.replace('_', ' ') || 'Loading...'}</span></p>
+            <p>Session: <span className="font-semibold">{currentSessionDisplay}</span></p>
+            {timeTrackingState?.status === 'on_break' && <p>On Break: <span className="font-semibold text-yellow-600 dark:text-yellow-400">{currentBreakDisplay}</span></p>}
+            {timeTrackingState?.status === 'on_lunch' && <p>On Lunch: <span className="font-semibold text-orange-600 dark:text-orange-400">{currentLunchDisplay}</span></p>}
+            <p>Studied Today: <span className="font-semibold text-green-600 dark:text-green-400">{formatDuration(totalMinutesStudiedToday * 60, 'hm')}</span></p>
+            <p>Target Today: <span className="font-semibold text-blue-600 dark:text-blue-400">{formatDuration(totalEstimatedMinutesForToday * 60, 'hm')}</span></p>
+            <p className="sm:col-span-2 lg:col-span-1">Progress: <span className="font-semibold text-purple-600 dark:text-purple-400">{timeDifferenceDisplay}</span></p>
+          </div>
         </CardHeader>
         <CardContent className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-            <Button onClick={handleClockIn} disabled={!canClockIn || isLoadingTimeState} className="bg-green-500 hover:bg-green-600 text-white"><Play className="mr-2 h-4 w-4" /> Clock In</Button>
-            <Button onClick={handleClockOut} disabled={!canClockOut || isLoadingTimeState} className="bg-red-500 hover:bg-red-600 text-white"><Pause className="mr-2 h-4 w-4" /> Clock Out</Button>
-            <Button onClick={handleStartBreak} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Coffee className="mr-2 h-4 w-4" /> Start Break</Button>
-            <Button onClick={handleEndBreak} disabled={!canEndBreak || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Break</Button>
-            <Button onClick={handleStartLunch} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Utensils className="mr-2 h-4 w-4" /> Start Lunch</Button>
-            <Button onClick={handleEndLunch} disabled={!canEndLunch || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Lunch</Button>
+          <Button onClick={handleClockIn} disabled={!canClockIn || isLoadingTimeState} className="bg-green-500 hover:bg-green-600 text-white"><Play className="mr-2 h-4 w-4" /> Clock In</Button>
+          <Button onClick={handleClockOut} disabled={!canClockOut || isLoadingTimeState} className="bg-red-500 hover:bg-red-600 text-white"><Pause className="mr-2 h-4 w-4" /> Clock Out</Button>
+          <Button onClick={handleStartBreak} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Coffee className="mr-2 h-4 w-4" /> Start Break</Button>
+          <Button onClick={handleEndBreak} disabled={!canEndBreak || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Break</Button>
+          <Button onClick={handleStartLunch} disabled={!canStartBreakOrLunch || isLoadingTimeState} variant="outline"><Utensils className="mr-2 h-4 w-4" /> Start Lunch</Button>
+          <Button onClick={handleEndLunch} disabled={!canEndLunch || isLoadingTimeState} variant="outline"><Play className="mr-2 h-4 w-4" /> End Lunch</Button>
         </CardContent>
       </Card>
 
-      <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="w-full">
+      <Tabs
+        value={activeMainTab}
+        onValueChange={(value) => setActiveMainTab(value)}
+        className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="configure">Configure & Outline</TabsTrigger>
           <TabsTrigger value="weeklyDetails" disabled={!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0}>
@@ -700,172 +711,172 @@ export default function SchedulePage() {
         </TabsList>
 
         <TabsContent value="configure" className="mt-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Schedule Parameters</CardTitle>
-                <CardDescription>Define your overall learning goal and availability to generate a weekly outline.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleGenerateWeeklyOutline} className="space-y-4">
-                  <div>
-                    <Label htmlFor="learningGoal">Primary Learning Goal</Label>
-                    <Input id="learningGoal" value={learningGoal} onChange={(e) => setLearningGoal(e.target.value)} placeholder="e.g., Master Next.js and Tailwind CSS" required />
+          <Card>
+            <CardHeader>
+              <CardTitle>Schedule Parameters</CardTitle>
+              <CardDescription>Define your overall learning goal and availability to generate a weekly outline.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleGenerateWeeklyOutline} className="space-y-4">
+                <div>
+                  <Label htmlFor="learningGoal">Primary Learning Goal</Label>
+                  <Input id="learningGoal" value={learningGoal} onChange={(e) => setLearningGoal(e.target.value)} placeholder="e.g., Master Next.js and Tailwind CSS" required />
+                </div>
+                <div>
+                  <Label htmlFor="scheduleDuration">Schedule Duration</Label>
+                  <Select value={scheduleDuration} onValueChange={(value: '1 month' | '1 year' | '2 years') => setScheduleDuration(value)}>
+                    <SelectTrigger id="scheduleDuration"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1 month">1 Month</SelectItem>
+                      <SelectItem value="1 year">1 Year</SelectItem>
+                      <SelectItem value="2 years">2 Years</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>Working Day Availability</Label>
+                  <div className="flex gap-2">
+                    <Input type="time" id="workingDayStartTime" value={workingDayStartTime} onChange={(e) => setWorkingDayStartTime(e.target.value)} required aria-label="Working day start time" />
+                    <Input type="time" id="workingDayEndTime" value={workingDayEndTime} onChange={(e) => setWorkingDayEndTime(e.target.value)} required aria-label="Working day end time" />
                   </div>
-                  <div>
-                    <Label htmlFor="scheduleDuration">Schedule Duration</Label>
-                    <Select value={scheduleDuration} onValueChange={(value: '1 month' | '1 year' | '2 years') => setScheduleDuration(value)}>
-                      <SelectTrigger id="scheduleDuration"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1 month">1 Month</SelectItem>
-                        <SelectItem value="1 year">1 Year</SelectItem>
-                        <SelectItem value="2 years">2 Years</SelectItem>
-                      </SelectContent>
-                    </Select>
+                </div>
+
+                <div>
+                  <Label>Weekly Holidays (Select days off)</Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-1">
+                    {allDaysOfWeek.map(day => (
+                      <div key={day} className="flex items-center space-x-2 p-2 border rounded-md hover:bg-accent/50 transition-colors">
+                        <Checkbox
+                          id={`holiday-${day}`}
+                          checked={selectedHolidays.includes(day)}
+                          onCheckedChange={() => handleHolidayChange(day)}
+                        />
+                        <Label htmlFor={`holiday-${day}`} className="text-sm font-normal cursor-pointer flex-grow">{day}</Label>
+                      </div>
+                    ))}
                   </div>
-                  
+                </div>
+
+                {selectedHolidays.length > 0 && (
                   <div>
-                    <Label>Working Day Availability</Label>
+                    <Label>Holiday Availability (If studying on selected holidays)</Label>
                     <div className="flex gap-2">
-                        <Input type="time" id="workingDayStartTime" value={workingDayStartTime} onChange={(e) => setWorkingDayStartTime(e.target.value)} required aria-label="Working day start time"/>
-                        <Input type="time" id="workingDayEndTime" value={workingDayEndTime} onChange={(e) => setWorkingDayEndTime(e.target.value)} required aria-label="Working day end time"/>
+                      <Input type="time" id="holidayStartTime" value={holidayStartTime} onChange={(e) => setHolidayStartTime(e.target.value)} aria-label="Holiday start time" />
+                      <Input type="time" id="holidayEndTime" value={holidayEndTime} onChange={(e) => setHolidayEndTime(e.target.value)} aria-label="Holiday end time" />
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">Define study times for selected holidays. Leave blank if holidays are full rest days (unless "Utilize Holidays" is checked below).</p>
                   </div>
+                )}
+                <div className="flex items-center space-x-2 pt-2">
+                  <Checkbox id="utilizeHolidays" checked={utilizeHolidays} onCheckedChange={(checked) => setUtilizeHolidays(Boolean(checked))} />
+                  <Label htmlFor="utilizeHolidays" className="text-sm font-normal">
+                    Allow AI to schedule tasks on selected holidays if crucial, even if specific holiday study times aren't set (AI will assume reasonable duration).
+                  </Label>
+                </div>
 
-                  <div>
-                    <Label>Weekly Holidays (Select days off)</Label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-1">
-                        {allDaysOfWeek.map(day => (
-                            <div key={day} className="flex items-center space-x-2 p-2 border rounded-md hover:bg-accent/50 transition-colors">
-                                <Checkbox 
-                                    id={`holiday-${day}`} 
-                                    checked={selectedHolidays.includes(day)} 
-                                    onCheckedChange={() => handleHolidayChange(day)}
-                                />
-                                <Label htmlFor={`holiday-${day}`} className="text-sm font-normal cursor-pointer flex-grow">{day}</Label>
-                            </div>
-                        ))}
-                    </div>
-                  </div>
-
-                  {selectedHolidays.length > 0 && (
-                    <div>
-                        <Label>Holiday Availability (If studying on selected holidays)</Label>
-                        <div className="flex gap-2">
-                            <Input type="time" id="holidayStartTime" value={holidayStartTime} onChange={(e) => setHolidayStartTime(e.target.value)} aria-label="Holiday start time"/>
-                            <Input type="time" id="holidayEndTime" value={holidayEndTime} onChange={(e) => setHolidayEndTime(e.target.value)} aria-label="Holiday end time"/>
-                        </div>
-                         <p className="text-xs text-muted-foreground mt-1">Define study times for selected holidays. Leave blank if holidays are full rest days (unless "Utilize Holidays" is checked below).</p>
-                    </div>
-                  )}
-                   <div className="flex items-center space-x-2 pt-2">
-                    <Checkbox id="utilizeHolidays" checked={utilizeHolidays} onCheckedChange={(checked) => setUtilizeHolidays(Boolean(checked))} />
-                    <Label htmlFor="utilizeHolidays" className="text-sm font-normal">
-                      Allow AI to schedule tasks on selected holidays if crucial, even if specific holiday study times aren't set (AI will assume reasonable duration).
-                    </Label>
-                  </div>
-
-                  <Button type="submit" className="w-full" disabled={isLoadingWeeklyOutline}>
-                    {isLoadingWeeklyOutline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ListChecks className="mr-2 h-4 w-4" />}
-                    {isLoadingWeeklyOutline ? 'Generating Outline...' : (storedScheduleData?.weeklyOutline?.length > 0 ? 'Regenerate Weekly Outline' : 'Generate Weekly Outline')}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                <Button type="submit" className="w-full" disabled={isLoadingWeeklyOutline}>
+                  {isLoadingWeeklyOutline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ListChecks className="mr-2 h-4 w-4" />}
+                  {isLoadingWeeklyOutline ? 'Generating Outline...' : (storedScheduleData?.weeklyOutline?.length > 0 ? 'Regenerate Weekly Outline' : 'Generate Weekly Outline')}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="weeklyDetails" className="mt-4">
-            <Card>
-                <CardHeader>
-                <CardTitle>Weekly Learning Plan</CardTitle>
-                {(!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && <CardDescription>Generate a weekly outline first from the "Configure & Outline" tab.</CardDescription>}
-                {(storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0) && <CardDescription>Select a week to view or generate its detailed daily tasks.</CardDescription>}
-                </CardHeader>
-                <CardContent>
-                {isLoadingWeeklyOutline && <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
-                
-                {!isLoadingWeeklyOutline && storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0 && (
-                  <div className="space-y-4">
-                    <Select 
-                        value={selectedWeekNumberForDetails?.toString()} 
-                        onValueChange={(value) => setSelectedWeekNumberForDetails(Number(value))}
-                    >
-                      <SelectTrigger className="w-full md:w-[300px]">
-                        <SelectValue placeholder="Select a week" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {storedScheduleData.weeklyOutline.map(week => (
-                          <SelectItem key={`week-select-${week.weekNumber}`} value={week.weekNumber.toString()}>
-                            Week {week.weekNumber}: {week.goalOrTopic.substring(0,30)}{week.goalOrTopic.length > 30 ? '...' : ''} ({format(parseISO(week.startDate), 'MMM d')} - {format(parseISO(week.endDate), 'MMM d')})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+          <Card>
+            <CardHeader>
+              <CardTitle>Weekly Learning Plan</CardTitle>
+              {(!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && <CardDescription>Generate a weekly outline first from the "Configure & Outline" tab.</CardDescription>}
+              {(storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0) && <CardDescription>Select a week to view or generate its detailed daily tasks.</CardDescription>}
+            </CardHeader>
+            <CardContent>
+              {isLoadingWeeklyOutline && <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
 
-                    {currentSelectedWeekData && (
-                       <Card className="mt-4">
-                        <CardHeader>
-                            <CardTitle>Week {currentSelectedWeekData.weekNumber}: {currentSelectedWeekData.goalOrTopic}</CardTitle>
-                            <CardDescription>Dates: {format(parseISO(currentSelectedWeekData.startDate), 'MMM d, yyyy')} - {format(parseISO(currentSelectedWeekData.endDate), 'MMM d, yyyy')}</CardDescription>
-                            {currentSelectedWeekData.summary && <p className="text-sm text-muted-foreground mt-2"><em>Weekly Summary: {currentSelectedWeekData.summary}</em></p>}
-                        </CardHeader>
-                        <CardContent>
-                            {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber && (
-                            <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
-                            )}
-                            {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && (!currentSelectedWeekData.dailyTasks || currentSelectedWeekData.dailyTasks.length === 0) && (
-                            <div className="text-center py-4">
-                                <p className="text-sm text-muted-foreground mb-2">No daily tasks generated for this week yet.</p>
-                                <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
-                                <CalendarPlus className="mr-2 h-4 w-4" /> Generate Daily Plan for Week {currentSelectedWeekData.weekNumber}
-                                </Button>
-                            </div>
-                            )}
-                            {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && currentSelectedWeekData.dailyTasks && currentSelectedWeekData.dailyTasks.length > 0 && (
-                            <>
-                                <div className="overflow-x-auto max-h-[400px] mb-4">
-                                <Table>
-                                    <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Date</TableHead>
-                                        <TableHead>Day</TableHead>
-                                        <TableHead>Topic / Task</TableHead>
-                                        <TableHead>Est. Duration</TableHead>
-                                        <TableHead>Time Slot</TableHead>
+              {!isLoadingWeeklyOutline && storedScheduleData?.weeklyOutline && storedScheduleData.weeklyOutline.length > 0 && (
+                <div className="space-y-4">
+                  <Select
+                    value={selectedWeekNumberForDetails?.toString()}
+                    onValueChange={(value) => setSelectedWeekNumberForDetails(Number(value))}
+                  >
+                    <SelectTrigger className="w-full md:w-[300px]">
+                      <SelectValue placeholder="Select a week" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {storedScheduleData.weeklyOutline.map(week => (
+                        <SelectItem key={`week-select-${week.weekNumber}`} value={week.weekNumber.toString()}>
+                          Week {week.weekNumber}: {week.goalOrTopic.substring(0, 30)}{week.goalOrTopic.length > 30 ? '...' : ''} ({format(parseISO(week.startDate), 'MMM d')} - {format(parseISO(week.endDate), 'MMM d')})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {currentSelectedWeekData && (
+                    <Card className="mt-4">
+                      <CardHeader>
+                        <CardTitle>Week {currentSelectedWeekData.weekNumber}: {currentSelectedWeekData.goalOrTopic}</CardTitle>
+                        <CardDescription>Dates: {format(parseISO(currentSelectedWeekData.startDate), 'MMM d, yyyy')} - {format(parseISO(currentSelectedWeekData.endDate), 'MMM d, yyyy')}</CardDescription>
+                        {currentSelectedWeekData.summary && <p className="text-sm text-muted-foreground mt-2"><em>Weekly Summary: {currentSelectedWeekData.summary}</em></p>}
+                      </CardHeader>
+                      <CardContent>
+                        {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber && (
+                          <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                        )}
+                        {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && (!currentSelectedWeekData.dailyTasks || currentSelectedWeekData.dailyTasks.length === 0) && (
+                          <div className="text-center py-4">
+                            <p className="text-sm text-muted-foreground mb-2">No daily tasks generated for this week yet.</p>
+                            <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
+                              <CalendarPlus className="mr-2 h-4 w-4" /> Generate Daily Plan for Week {currentSelectedWeekData.weekNumber}
+                            </Button>
+                          </div>
+                        )}
+                        {isLoadingDailyTasksForWeek !== currentSelectedWeekData.weekNumber && currentSelectedWeekData.dailyTasks && currentSelectedWeekData.dailyTasks.length > 0 && (
+                          <>
+                            <div className="overflow-x-auto max-h-[400px] mb-4">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Day</TableHead>
+                                    <TableHead>Topic / Task</TableHead>
+                                    <TableHead>Est. Duration</TableHead>
+                                    <TableHead>Time Slot</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {currentSelectedWeekData.dailyTasks.map((task, index) => (
+                                    <TableRow key={index}>
+                                      <TableCell>{task.date ? format(parseISO(task.date), 'MMM d, yyyy') : 'N/A'}</TableCell>
+                                      <TableCell>{task.dayOfWeek}</TableCell>
+                                      <TableCell>{task.topic}</TableCell>
+                                      <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
+                                      <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
                                     </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                    {currentSelectedWeekData.dailyTasks.map((task, index) => (
-                                        <TableRow key={index}>
-                                        <TableCell>{task.date ? format(parseISO(task.date), 'MMM d, yyyy') : 'N/A'}</TableCell>
-                                        <TableCell>{task.dayOfWeek}</TableCell>
-                                        <TableCell>{task.topic}</TableCell>
-                                        <TableCell>{task.estimatedDuration || 'N/A'}</TableCell>
-                                        <TableCell>{task.timeSlot || 'Flexible'}</TableCell>
-                                        </TableRow>
-                                    ))}
-                                    </TableBody>
-                                </Table>
-                                </div>
-                                <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} variant="outline" disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
-                                {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-                                Regenerate Daily Plan
-                                </Button>
-                            </>
-                            )}
-                        </CardContent>
-                        </Card>
-                    )}
-                  </div>
-                )}
-                {!isLoadingWeeklyOutline && (!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && (
-                    <div className="text-center py-8 text-muted-foreground">
-                    <CalendarDays className="mx-auto h-12 w-12 opacity-50 mb-4" />
-                    <p>No weekly outline generated yet.</p>
-                    <p className="text-sm">Go to the "Configure & Outline" tab to generate one.</p>
-                    </div>
-                )}
-                </CardContent>
-            </Card>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                            <Button onClick={() => handleGenerateDailyTasksForWeek(currentSelectedWeekData)} variant="outline" disabled={isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber}>
+                              {isLoadingDailyTasksForWeek === currentSelectedWeekData.weekNumber ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                              Regenerate Daily Plan
+                            </Button>
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+              {!isLoadingWeeklyOutline && (!storedScheduleData?.weeklyOutline || storedScheduleData.weeklyOutline.length === 0) && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CalendarDays className="mx-auto h-12 w-12 opacity-50 mb-4" />
+                  <p>No weekly outline generated yet.</p>
+                  <p className="text-sm">Go to the "Configure & Outline" tab to generate one.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
