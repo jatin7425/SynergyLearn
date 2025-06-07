@@ -19,6 +19,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import type { Timestamp } from 'firebase/firestore';
+import { useRef } from 'react';
+import { motion, useScroll, useTransform } from 'framer-motion';
 
 interface Milestone {
   id: string;
@@ -34,7 +36,7 @@ const landingPageFeatures = [
     icon: Lightbulb,
     title: "AI-Powered Suggestions",
     description: "Let our smart AI suggest milestones, generate flashcards, and help you break down complex topics.",
-    color: "text-yellow-500", 
+    color: "text-yellow-500",
   },
   {
     icon: Users,
@@ -136,6 +138,24 @@ export default function DashboardPage() {
   const router = useRouter();
   const { toast } = useToast();
 
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const { scrollYProgress } = useScroll({
+    target: containerRef,
+    offset: [
+      'start 75%',   // when container.top hits 50% viewport → scrollYProgress = 0
+      'end 75%'      // when container.bottom hits 50% viewport → scrollYProgress = 1
+    ]
+  });
+
+  // map 0 → 0%, 0.5 → -150%
+  const x = useTransform(
+    scrollYProgress, [0, 1],
+    ['0%', '-25%'],
+    { clamp: true }
+  );
+
   const [landingTheme, setLandingTheme] = useState<'light' | 'dark'>('light');
   const [landingMounted, setLandingMounted] = useState(false);
 
@@ -147,7 +167,7 @@ export default function DashboardPage() {
   const [currentGoalTitle, setCurrentGoalTitle] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user && !authLoading) { 
+    if (!user && !authLoading) {
       setLandingMounted(true);
       const storedTheme = localStorage.getItem('synergylearn_landing_theme') as 'light' | 'dark' | null;
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -156,7 +176,7 @@ export default function DashboardPage() {
   }, [user, authLoading]);
 
   useEffect(() => {
-    if (landingMounted && !user) { 
+    if (landingMounted && !user) {
       if (landingTheme === 'dark') {
         document.documentElement.classList.add('dark');
       } else {
@@ -193,13 +213,13 @@ export default function DashboardPage() {
           const milestonesRef = collection(db, 'users', user.uid, 'milestones');
           const milestonesQuery = query(milestonesRef);
           const milestonesSnap = await getDocs(milestonesQuery);
-          
+
           const allMilestones: Milestone[] = [];
           milestonesSnap.forEach(doc => allMilestones.push({ id: doc.id, ...doc.data() } as Milestone));
-          
+
           const completed = allMilestones.filter(m => m.status === 'done').length;
           setTasksCompletedCount(completed);
-          
+
           if (allMilestones.length > 0) {
             setOverallProgress(Math.round((completed / allMilestones.length) * 100));
           } else {
@@ -254,7 +274,7 @@ export default function DashboardPage() {
               <a href="#testimonials" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Testimonials</a>
             </div>
             <div className="flex items-center gap-2">
-               {landingMounted && (
+              {landingMounted && (
                 <Button variant="ghost" size="icon" onClick={toggleLandingTheme} aria-label="Toggle theme">
                   {landingTheme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
                 </Button>
@@ -279,15 +299,49 @@ export default function DashboardPage() {
               </Button>
             </Link>
             <div className="mt-12 md:mt-16">
-              <Image
-                src="https://placehold.co/1000x600.png"
-                alt="Learning dashboard illustration on a futuristic laptop screen"
-                width={1000}
-                height={600}
-                className="rounded-lg shadow-2xl mx-auto"
-                data-ai-hint="learning future"
-                priority
-              />
+              <motion.div
+                ref={containerRef}                       // ← attach ref here
+                className="mt-16 overflow-x-hidden relative"
+                initial={{ opacity: 0 }}
+                whileInView={{ opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: 1 }}
+              >
+                <motion.div
+                  className="flex space-x-4 items-end"
+                  style={{ x }}                           // ← drives horizontal scroll
+                >
+                  <div className="min-w-[800px]">
+                    <Image
+                      src="https://cdn.prod.website-files.com/683b1158eba2935c7c4b66a3/683b133553773d9881e1ea6b_a9b915eb-0150-4aad-9c23-a69fa4d14646.avif"
+                      alt="Dashboard illustration 1"
+                      width={800}
+                      height={480}
+                      className="rounded-lg shadow-2xl"
+                    />
+                  </div>
+
+                  <div className="min-w-[600px]">
+                    <Image
+                      src="https://cdn.prod.website-files.com/683b1158eba2935c7c4b66a3/683b1334cc75e24bfef87d06_c45baeee-432c-4765-b1f1-6bcb7ef42d75.avif"
+                      alt="Dashboard illustration 2"
+                      width={600}
+                      height={360}
+                      className="rounded-lg shadow-2xl"
+                    />
+                  </div>
+
+                  <div className="min-w-[400px]">
+                    <Image
+                      src="https://cdn.prod.website-files.com/683b1158eba2935c7c4b66a3/683b1334cd8fe3c5bac746ce_1e17ef38-70a9-42ee-85df-1301483c75bc.avif"
+                      alt="Dashboard illustration 3"
+                      width={400}
+                      height={240}
+                      className="rounded-lg shadow-2xl"
+                    />
+                  </div>
+                </motion.div>
+              </motion.div>
             </div>
           </div>
         </section>
@@ -355,7 +409,7 @@ export default function DashboardPage() {
                     <div className="flex items-center mb-4">
                       <Avatar className="h-12 w-12 mr-4">
                         <AvatarImage src={testimonial.avatar} alt={testimonial.name} data-ai-hint={testimonial.dataAiHint} />
-                        <AvatarFallback>{testimonial.name.substring(0,2).toUpperCase()}</AvatarFallback>
+                        <AvatarFallback>{testimonial.name.substring(0, 2).toUpperCase()}</AvatarFallback>
                       </Avatar>
                       <div>
                         <p className="font-semibold text-foreground">{testimonial.name}</p>
@@ -366,11 +420,11 @@ export default function DashboardPage() {
                       "{testimonial.quote}"
                     </blockquote>
                   </CardContent>
-                   <CardFooter className="pt-4 border-t border-border mt-auto">
-                        <div className="flex text-yellow-400">
-                            {[...Array(5)].map((_, i) => <Star key={i} className="h-4 w-4 fill-current" />)}
-                        </div>
-                    </CardFooter>
+                  <CardFooter className="pt-4 border-t border-border mt-auto">
+                    <div className="flex text-yellow-400">
+                      {[...Array(5)].map((_, i) => <Star key={i} className="h-4 w-4 fill-current" />)}
+                    </div>
+                  </CardFooter>
                 </Card>
               ))}
             </div>
@@ -411,7 +465,7 @@ export default function DashboardPage() {
       <PageHeader
         title="Dashboard"
         description={
-            isLoadingStats ? "Loading your learning overview..." : 
+          isLoadingStats ? "Loading your learning overview..." :
             currentGoalTitle ? `Current Goal: ${currentGoalTitle}` : "Welcome back! Set a new goal to get started."
         }
         actions={
@@ -422,58 +476,58 @@ export default function DashboardPage() {
           </Link>
         }
       />
-    {isLoadingStats ? (
+      {isLoadingStats ? (
         <div className="grid gap-4 md:gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {[...Array(3)].map((_, i) => (
-                <Card key={i}>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium"><Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Loading...</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold"><Loader2 className="h-6 w-6 animate-spin" /></div>
-                        <p className="text-xs text-muted-foreground">Fetching data...</p>
-                    </CardContent>
-                </Card>
-            ))}
+          {[...Array(3)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium"><Loader2 className="h-4 w-4 animate-spin inline-block mr-2" /> Loading...</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                <p className="text-xs text-muted-foreground">Fetching data...</p>
+              </CardContent>
+            </Card>
+          ))}
         </div>
-    ) : (
-      <div className="grid gap-4 md:gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Goal</CardTitle>
-            <Target className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeGoalsCount}</div>
-            <p className="text-xs text-muted-foreground">
-              {currentGoalTitle ? `Focused on: ${currentGoalTitle.substring(0,25)}${currentGoalTitle.length > 25 ? '...' : ''}` : "No primary goal set"}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Milestones Completed</CardTitle>
-            <CheckCircle className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tasksCompletedCount}</div>
-            {/* <p className="text-xs text-muted-foreground">
+      ) : (
+        <div className="grid gap-4 md:gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Active Goal</CardTitle>
+              <Target className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{activeGoalsCount}</div>
+              <p className="text-xs text-muted-foreground">
+                {currentGoalTitle ? `Focused on: ${currentGoalTitle.substring(0, 25)}${currentGoalTitle.length > 25 ? '...' : ''}` : "No primary goal set"}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Milestones Completed</CardTitle>
+              <CheckCircle className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{tasksCompletedCount}</div>
+              {/* <p className="text-xs text-muted-foreground">
               7 pending for this week (Static placeholder)
             </p> */}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
-            <Activity className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{overallProgress}%</div>
-            <Progress value={overallProgress} className="mt-2 h-2" />
-          </CardContent>
-        </Card>
-      </div>
-    )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
+              <Activity className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{overallProgress}%</div>
+              <Progress value={overallProgress} className="mt-2 h-2" />
+            </CardContent>
+          </Card>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -481,26 +535,26 @@ export default function DashboardPage() {
             <CardDescription>Monthly milestones completed (simplified view).</CardDescription>
           </CardHeader>
           <CardContent className="h-[250px] md:h-[300px]">
-          {isLoadingStats ? <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div> : 
-            <ChartContainer config={chartConfig} className="h-full w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <ShadBarChart data={dashboardChartData}>
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="month"
-                    tickLine={false}
-                    tickMargin={10}
-                    axisLine={false}
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={10}
-                  />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} allowDecimals={false} />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} />
-                  {/* <Bar dataKey="goals" fill="var(--color-goals)" radius={4} /> */}
-                </ShadBarChart>
-              </ResponsiveContainer>
-            </ChartContainer>
+            {isLoadingStats ? <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div> :
+              <ChartContainer config={chartConfig} className="h-full w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ShadBarChart data={dashboardChartData}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis
+                      dataKey="month"
+                      tickLine={false}
+                      tickMargin={10}
+                      axisLine={false}
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={10}
+                    />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} allowDecimals={false} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} />
+                    {/* <Bar dataKey="goals" fill="var(--color-goals)" radius={4} /> */}
+                  </ShadBarChart>
+                </ResponsiveContainer>
+              </ChartContainer>
             }
           </CardContent>
         </Card>
@@ -522,34 +576,33 @@ export default function DashboardPage() {
               </Button>
             </Link>
             <Link href="/ai/milestone-suggestions" passHref>
-               <Button variant="outline" className="w-full justify-start">
+              <Button variant="outline" className="w-full justify-start">
                 <Lightbulb className="mr-2 h-4 w-4" /> Get Milestone Suggestions
               </Button>
             </Link>
-             <Link href="/ai/flashcard-generator" passHref>
-               <Button variant="outline" className="w-full justify-start">
+            <Link href="/ai/flashcard-generator" passHref>
+              <Button variant="outline" className="w-full justify-start">
                 <Sparkles className="mr-2 h-4 w-4" /> AI Flashcard Generator
               </Button>
             </Link>
           </CardContent>
         </Card>
       </div>
-      
+
       <Card className="overflow-hidden">
         <CardHeader>
-            <CardTitle>Discover SynergyLearn Features</CardTitle>
+          <CardTitle>Discover SynergyLearn Features</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-             <Image src="https://placehold.co/1200x300.png" alt="SynergyLearn feature banner" width={1200} height={300} className="w-full h-auto object-cover" data-ai-hint="learning banner" />
+          <Image src="https://placehold.co/1200x300.png" alt="SynergyLearn feature banner" width={1200} height={300} className="w-full h-auto object-cover" data-ai-hint="learning banner" />
         </CardContent>
         <CardFooter className="p-4 md:p-6 bg-muted/50">
-            <p className="text-sm text-muted-foreground">
-                Explore AI-powered flashcards, collaborative study rooms, and personalized learning paths to supercharge your studies.
-            </p>
+          <p className="text-sm text-muted-foreground">
+            Explore AI-powered flashcards, collaborative study rooms, and personalized learning paths to supercharge your studies.
+          </p>
         </CardFooter>
       </Card>
     </div>
   );
 }
 
-    
