@@ -11,15 +11,27 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 import { Loader2, Save, AlertCircle, Brain, ShieldAlert } from 'lucide-react';
 
 const MODEL_CONFIG_PATH = 'adminConfig/modelSelection';
-
-// !!! IMPORTANT: For a real application, replace this with your actual admin UID !!!
-// This is a placeholder for client-side prototype demonstration.
-// Secure admin access should be managed via backend logic or Firebase Custom Claims and Firestore Rules.
 const ADMIN_UID = 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
+
+async function logAdminAction(adminUser: { uid: string, email?: string | null }, actionType: string, details: Record<string, any>) {
+  try {
+    const auditLogsColRef = collection(db, 'auditLogs');
+    await addDoc(auditLogsColRef, {
+      timestamp: serverTimestamp(),
+      adminUid: adminUser.uid,
+      adminEmail: adminUser.email || 'N/A',
+      actionType: actionType,
+      details: details,
+    });
+  } catch (error) {
+    console.error("Failed to log admin action:", error);
+    // Optionally, notify admin that logging failed, but don't block main action
+  }
+}
 
 export default function ModelSettingsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -67,9 +79,8 @@ export default function ModelSettingsPage() {
       fetchModelConfig();
     } else {
       setIsAuthorizedAdmin(false);
-      setIsLoading(false); // No data to load if not admin
+      setIsLoading(false); 
       toast({ title: "Access Denied", description: "You are not authorized to view this page.", variant: "destructive" });
-      // Optionally redirect or show an access denied message. For now, the page content will reflect this.
     }
   }, [user, authLoading, router, pathname, toast]);
 
@@ -85,15 +96,26 @@ export default function ModelSettingsPage() {
     }
 
     setIsSaving(true);
+    const oldModelId = currentModelId;
+    const updatedModelId = newModelId.trim();
+
     try {
       const configDocRef = doc(db, MODEL_CONFIG_PATH);
       await setDoc(configDocRef, {
-        activeModelId: newModelId.trim(),
+        activeModelId: updatedModelId,
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
       }, { merge: true });
-      setCurrentModelId(newModelId.trim());
-      toast({ title: "Model Configuration Saved", description: `Active model set to: ${newModelId.trim()}` });
+      
+      // Log the action
+      await logAdminAction(
+        { uid: user.uid, email: user.email },
+        'MODEL_CONFIG_CHANGED',
+        { oldModelId: oldModelId || 'Not Set', newModelId: updatedModelId }
+      );
+
+      setCurrentModelId(updatedModelId);
+      toast({ title: "Model Configuration Saved", description: `Active model set to: ${updatedModelId}` });
     } catch (error) {
       console.error("Error saving model config:", error);
       toast({ title: "Error saving config", description: (error as Error).message, variant: "destructive" });
@@ -115,7 +137,6 @@ export default function ModelSettingsPage() {
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
         <h1 className="text-2xl font-bold mb-2">Authentication Required</h1>
-        <p className="text-muted-foreground mb-4">You need to be logged in to access this area.</p>
         <Button onClick={() => router.push(`/login?redirect=${pathname}`)}>Go to Login</Button>
       </div>
     );
@@ -138,7 +159,7 @@ export default function ModelSettingsPage() {
           <CardContent>
             <p className="text-destructive-foreground">You do not have permission to access this page. Please contact the site administrator if you believe this is an error.</p>
             <p className="text-sm text-muted-foreground mt-2">
-              To enable admin access for this prototype, update the `ADMIN_UID` constant in `src/app/admin/model-settings/page.tsx` with your Firebase User ID.
+              Admin UID for this prototype: {ADMIN_UID}
             </p>
             <Button variant="outline" onClick={() => router.push('/')} className="mt-4">
               Go to Dashboard

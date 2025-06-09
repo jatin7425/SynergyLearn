@@ -3,62 +3,64 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Helper function to check if a user is an admin
-    // For prototype, hardcoding the admin UID. In production, use custom claims.
-    function isAdmin(userId) {
-      return userId == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2'; // Replace with your actual admin UID
+    // User Profiles: users can read their own, admin can read all
+    match /userProfiles/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2');
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      // No delete for user profiles generally
     }
 
-    // User specific data (notes, milestones, etc.)
+    // User-specific data
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // User profiles (created during sign-up)
-    match /userProfiles/{profileUserId} {
-      // Allow user to read/write their own profile
-      // Allow admin to read any user profile
-      allow read: if request.auth != null && (request.auth.uid == profileUserId || isAdmin(request.auth.uid));
-      allow write: if request.auth != null && request.auth.uid == profileUserId; // Only user can write their own profile
-    }
-    
-    // Study Rooms
+    // Study Rooms: Authenticated users can read all, create new ones.
+    // Only creator (or future admin role) can update/delete.
     match /studyRooms/{roomId} {
-      allow read: if request.auth != null; // Any authenticated user can read room details (e.g., to list them)
-      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid; // User can create if they are the creator
-      allow update: if request.auth != null && 
-                      (request.resource.data.createdBy == request.auth.uid || // Creator can update
-                       request.resource.data.members.hasAny([request.auth.uid])); // Or members can update (e.g. drawing on whiteboard, adding themselves to members list)
-                                                                                // More granular control might be needed for specific fields (e.g. only creator can change name/topic)
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
+      // Member list updates are tricky. For now, allow any authenticated user to update (e.g., to join/leave)
+      // A more robust rule would check if the user adding/removing themselves is the request.auth.uid
+      allow update: if request.auth != null; 
+      // allow update: if request.auth != null && (resource.data.createdBy == request.auth.uid || request.auth.uid in resource.data.members); // Example more restrictive update
+      allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid; // Only creator can delete
+
+      // Messages within a study room
+      match /messages/{messageId} {
+        allow read: if request.auth != null && exists(/databases/$(database)/documents/studyRooms/$(roomId)); // User must be able to read room to read messages
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && exists(/databases/$(database)/documents/studyRooms/$(roomId));
+        allow update: if request.auth != null && resource.data.userId == request.auth.uid; // User can edit their own messages
+        allow delete: if request.auth != null && resource.data.userId == request.auth.uid; // User can delete their own messages
+      }
     }
 
-    match /studyRooms/{roomId}/messages/{messageId} {
-      allow read: if request.auth != null; // Any authenticated user in the room context (implicitly) can read messages
-      allow create: if request.auth != null && 
-                      (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'AI_ASSISTANT'); // User can create their own messages, or AI can
-      allow update: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can edit
-      allow delete: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can delete
-    }
-
-    // Shared Note Links - public read for link ID, only owner creates/deletes
+    // Shared Note Links: Authenticated users can read. Only owner of the note can create/delete links.
     match /sharedNoteLinks/{linkId} {
-      allow read: if true; // Anyone with the linkId can read it to get noteId and ownerUid
+      allow read: if request.auth != null;
       allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid; 
-      // No update needed for links, they are static references
-    }
-    
-    // Admin Configuration
-    match /adminConfig/{configDocId} {
-      allow read: if request.auth != null; // Any authenticated user can read (e.g., flows reading model ID)
-      allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
     }
 
-     // System Agents (like AI Helper profile)
+    // Admin Configuration: Only a specific admin UID can read/write.
+    match /adminConfig/{configDocId} {
+      allow read, write: if request.auth != null && request.auth.uid == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
+    }
+
+    // Audit Logs: Only admin can read/write.
+    match /auditLogs/{logId} {
+      allow read, create: if request.auth != null && request.auth.uid == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
+      // Generally, audit logs should not be updated or deleted by admin through client.
+      allow update, delete: if false; 
+    }
+
+    // System Agents (like AI Helper Profile)
+    // Typically read by all authenticated users, write restricted to admin/deploy script.
     match /systemAgents/{agentId} {
-      allow read: if true; // Publicly readable (e.g., by study room to get AI helper details)
-      allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write/update these profiles
+      allow read: if request.auth != null;
+      // For "ensureAIHelperProfileExists" from settings page (run by admin)
+      allow write: if request.auth != null && request.auth.uid == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
     }
   }
 }

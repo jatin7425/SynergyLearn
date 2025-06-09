@@ -13,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Target, Save, Loader2, AlertCircle } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 export default function NewRoadmapGoalPage() {
   const { user, loading: authLoading } = useAuth();
@@ -44,14 +44,24 @@ export default function NewRoadmapGoalPage() {
     }
     setIsSaving(true);
     try {
+      // Save to new learningGoals subcollection
+      const learningGoalsColRef = collection(db, 'users', user.uid, 'learningGoals');
+      const newGoalRef = await addDoc(learningGoalsColRef, {
+        title: goalTitle.trim(),
+        description: goalDescription.trim(),
+        isArchived: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      // Set this new goal as active
       const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
       await setDoc(profileRef, { 
-        learningGoal: goalTitle.trim(),
-        learningGoalDescription: goalDescription.trim() 
+        activeLearningGoalId: newGoalRef.id 
       }, { merge: true });
       
-      toast({ title: 'New Goal Set!', description: `Your goal "${goalTitle}" has been saved.` });
-      router.push(`/roadmap`); // Navigate to roadmap, it will pick up the new goal
+      toast({ title: 'New Goal Set!', description: `Your goal "${goalTitle}" has been saved and set as active.` });
+      router.push(`/roadmap`);
     } catch (error) {
       console.error("Error setting goal: ", error);
       toast({ title: 'Error Setting Goal', description: (error as Error).message, variant: 'destructive' });
@@ -129,5 +139,3 @@ export default function NewRoadmapGoalPage() {
     </div>
   );
 }
-
-    
