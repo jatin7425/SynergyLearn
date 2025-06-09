@@ -17,7 +17,7 @@ import { Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart as Shad
 import { LandingPageLogo } from '@/components/common/logo';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import type { Timestamp } from 'firebase/firestore';
 import { useRef } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
@@ -30,6 +30,16 @@ interface Milestone {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
+
+interface LearningGoal {
+  id: string;
+  title: string;
+  description?: string;
+  isArchived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 
 const landingPageFeatures = [
   {
@@ -126,7 +136,7 @@ const chartConfig = {
     label: "Tasks Completed",
     color: "hsl(var(--primary))",
   },
-  goals: { // This might represent milestones achieved or broader goals.
+  goals: { 
     label: "Milestones Achieved",
     color: "hsl(var(--accent))",
   },
@@ -144,12 +154,11 @@ export default function DashboardPage() {
   const { scrollYProgress } = useScroll({
     target: containerRef,
     offset: [
-      'start 75%',   // when container.top hits 50% viewport → scrollYProgress = 0
-      'end 75%'      // when container.bottom hits 50% viewport → scrollYProgress = 1
+      'start 75%', 
+      'end 75%'      
     ]
   });
 
-  // map 0 → 0%, 0.5 → -150%
   const x = useTransform(
     scrollYProgress, [0, 1],
     ['0%', '-25%'],
@@ -159,12 +168,12 @@ export default function DashboardPage() {
   const [landingTheme, setLandingTheme] = useState<'light' | 'dark'>('light');
   const [landingMounted, setLandingMounted] = useState(false);
 
-  const [activeGoalsCount, setActiveGoalsCount] = useState(0);
-  const [tasksCompletedCount, setTasksCompletedCount] = useState(0);
+  const [activeGoal, setActiveGoal] = useState<LearningGoal | null>(null);
+  const [completedMilestonesCount, setCompletedMilestonesCount] = useState(0);
+  const [totalMilestonesCount, setTotalMilestonesCount] = useState(0);
   const [overallProgress, setOverallProgress] = useState(0);
   const [dashboardChartData, setDashboardChartData] = useState(initialChartData);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
-  const [currentGoalTitle, setCurrentGoalTitle] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user && !authLoading) {
@@ -196,56 +205,56 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user && !authLoading) {
       setIsLoadingStats(true);
-      const fetchDashboardData = async () => {
-        try {
-          // Fetch learning goal
-          const profileDocRef = doc(db, 'users', user.uid, 'profile', 'main');
-          const profileDocSnap = await getDoc(profileDocRef);
-          if (profileDocSnap.exists() && profileDocSnap.data()?.learningGoal) {
-            setCurrentGoalTitle(profileDocSnap.data()?.learningGoal);
-            setActiveGoalsCount(1); // Assuming one main goal for now
+      
+      const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
+      const unsubscribeProfile = onSnapshot(profileRef, async (profileSnap) => {
+        const activeGoalId = profileSnap.data()?.activeLearningGoalId;
+        if (activeGoalId) {
+          const goalDocRef = doc(db, 'users', user.uid, 'learningGoals', activeGoalId);
+          const goalSnap = await getDoc(goalDocRef);
+          if (goalSnap.exists()) {
+            setActiveGoal({ id: goalSnap.id, ...goalSnap.data() } as LearningGoal);
+            
+            // Fetch milestones for this active goal
+            const milestonesRef = collection(db, 'users', user.uid, 'learningGoals', activeGoalId, 'milestones');
+            const milestonesQuery = query(milestonesRef);
+            const milestonesSnap = await getDocs(milestonesQuery);
+            
+            const allMilestones: Milestone[] = [];
+            milestonesSnap.forEach(doc => allMilestones.push({ id: doc.id, ...doc.data() } as Milestone));
+            
+            const completed = allMilestones.filter(m => m.status === 'done').length;
+            setCompletedMilestonesCount(completed);
+            setTotalMilestonesCount(allMilestones.length);
+            setOverallProgress(allMilestones.length > 0 ? Math.round((completed / allMilestones.length) * 100) : 0);
+            
+            const newChartData = [...initialChartData];
+            if (allMilestones.length > 0) { newChartData[5].tasks = completed; }
+            setDashboardChartData(newChartData);
+
           } else {
-            setActiveGoalsCount(0);
-            setCurrentGoalTitle(null);
-          }
-
-          // Fetch milestones for progress
-          const milestonesRef = collection(db, 'users', user.uid, 'milestones');
-          const milestonesQuery = query(milestonesRef);
-          const milestonesSnap = await getDocs(milestonesQuery);
-
-          const allMilestones: Milestone[] = [];
-          milestonesSnap.forEach(doc => allMilestones.push({ id: doc.id, ...doc.data() } as Milestone));
-
-          const completed = allMilestones.filter(m => m.status === 'done').length;
-          setTasksCompletedCount(completed);
-
-          if (allMilestones.length > 0) {
-            setOverallProgress(Math.round((completed / allMilestones.length) * 100));
-          } else {
+            setActiveGoal(null);
+            setCompletedMilestonesCount(0);
+            setTotalMilestonesCount(0);
             setOverallProgress(0);
           }
-
-          // Placeholder for more detailed chart data aggregation
-          // For now, we'll use simplified logic or keep it somewhat static
-          // This part would require more complex data logging (e.g., daily completions)
-          const newChartData = [...initialChartData];
-          if (allMilestones.length > 0) { // Very basic: distribute completed tasks over last months
-            newChartData[5].tasks = completed; // Put all completed in current month for simplicity
-            // newChartData[5].goals = activeGoalsCount; // if 1 goal is active
-          }
-          setDashboardChartData(newChartData);
-
-        } catch (err) {
-          console.error("Error fetching dashboard data: ", err);
-          toast({ title: "Error", description: "Could not load dashboard statistics.", variant: "destructive" });
-        } finally {
-          setIsLoadingStats(false);
+        } else {
+          setActiveGoal(null);
+          setCompletedMilestonesCount(0);
+          setTotalMilestonesCount(0);
+          setOverallProgress(0);
         }
-      };
-      fetchDashboardData();
+        setIsLoadingStats(false);
+      }, (err) => {
+        console.error("Error fetching dashboard data: ", err);
+        toast({ title: "Error", description: "Could not load dashboard statistics.", variant: "destructive" });
+        setIsLoadingStats(false);
+      });
+
+      return () => unsubscribeProfile();
+
     } else if (!user && !authLoading) {
-      setIsLoadingStats(false); // Not logged in, no stats to load
+      setIsLoadingStats(false); 
     }
   }, [user, authLoading, toast]);
 
@@ -254,7 +263,7 @@ export default function DashboardPage() {
     setLandingTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
-  if (authLoading || (!user && !landingMounted)) { // Show loader if auth is loading OR (no user AND landing page assets not ready)
+  if (authLoading || (!user && !landingMounted)) { 
     return (
       <div className="flex justify-center items-center min-h-screen bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -300,7 +309,7 @@ export default function DashboardPage() {
             </Link>
             <div className="mt-12 md:mt-16 max-md:hidden">
               <motion.div
-                ref={containerRef}                       // ← attach ref here
+                ref={containerRef}                     
                 className="mt-16 overflow-x-hidden relative"
                 initial={{ opacity: 0 }}
                 whileInView={{ opacity: 1 }}
@@ -309,7 +318,7 @@ export default function DashboardPage() {
               >
                 <motion.div
                   className="flex space-x-4 items-end"
-                  style={{ x }}                           // ← drives horizontal scroll
+                  style={{ x }}                         
                 >
                   <div className="min-w-[800px]">
                     <Image
@@ -466,12 +475,12 @@ export default function DashboardPage() {
         title="Dashboard"
         description={
           isLoadingStats ? "Loading your learning overview..." :
-            currentGoalTitle ? `Current Goal: ${currentGoalTitle}` : "Welcome back! Set a new goal to get started."
+            activeGoal ? `Active Goal: ${activeGoal.title}` : "Welcome back! Set or select a goal on the Roadmap page to get started."
         }
         actions={
-          <Link href="/roadmap/new" passHref>
+          <Link href="/roadmap" passHref>
             <Button>
-              <PlusCircle className="mr-2 h-4 w-4" /> New Goal
+              <GitFork className="mr-2 h-4 w-4" /> View Roadmap
             </Button>
           </Link>
         }
@@ -498,27 +507,27 @@ export default function DashboardPage() {
               <Target className="h-5 w-5 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{activeGoalsCount}</div>
-              <p className="text-xs text-muted-foreground">
-                {currentGoalTitle ? `Focused on: ${currentGoalTitle.substring(0, 25)}${currentGoalTitle.length > 25 ? '...' : ''}` : "No primary goal set"}
+              <div className="text-2xl font-bold">{activeGoal ? 1 : 0}</div>
+              <p className="text-xs text-muted-foreground truncate">
+                {activeGoal ? `${activeGoal.title}` : "No active goal"}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Milestones Completed</CardTitle>
+              <CardTitle className="text-sm font-medium">Milestones Completed (Active Goal)</CardTitle>
               <CheckCircle className="h-5 w-5 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{tasksCompletedCount}</div>
-              {/* <p className="text-xs text-muted-foreground">
-              7 pending for this week (Static placeholder)
-            </p> */}
+              <div className="text-2xl font-bold">{completedMilestonesCount}</div>
+               <p className="text-xs text-muted-foreground">
+                out of {totalMilestonesCount} total milestones for active goal.
+              </p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
+              <CardTitle className="text-sm font-medium">Overall Progress (Active Goal)</CardTitle>
               <Activity className="h-5 w-5 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -532,7 +541,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Learning Progress</CardTitle>
-            <CardDescription>Monthly milestones completed (simplified view).</CardDescription>
+            <CardDescription>Monthly milestones completed (simplified view for active goal).</CardDescription>
           </CardHeader>
           <CardContent className="h-[250px] md:h-[300px]">
             {isLoadingStats ? <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div> :
@@ -550,8 +559,7 @@ export default function DashboardPage() {
                     />
                     <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} allowDecimals={false} />
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} />
-                    {/* <Bar dataKey="goals" fill="var(--color-goals)" radius={4} /> */}
+                    <Bar dataKey="tasks" fill="var(--color-tasks)" radius={4} name="Milestones Completed" />
                   </ShadBarChart>
                 </ResponsiveContainer>
               </ChartContainer>
@@ -605,4 +613,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

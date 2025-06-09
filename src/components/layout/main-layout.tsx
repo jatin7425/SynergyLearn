@@ -15,16 +15,22 @@ import SidebarNav from './sidebar-nav';
 import UserNav from './user-nav';
 import { Button } from '@/components/ui/button';
 import { PanelLeft } from 'lucide-react';
-import { MainAppLogo } from '@/components/common/logo'; // Updated import
+import { MainAppLogo } from '@/components/common/logo';
 
 export default function MainLayout({ children }: PropsWithChildren) {
-  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile, state } = useSidebar();
+
+  const headerLeftOffset = isMobile 
+    ? '0px' 
+    : state === 'expanded' 
+      ? 'var(--sidebar-width)' 
+      : 'var(--sidebar-width-icon)';
 
   return (
     <>
       <Sidebar collapsible="icon" variant="sidebar" side="left">
         <SidebarHeader className="flex items-center justify-between p-4">
-          <MainAppLogo /> {/* Updated usage */}
+          <MainAppLogo />
           <div className="group-data-[collapsible=icon]:hidden">
             <SidebarTrigger />
           </div>
@@ -37,7 +43,10 @@ export default function MainLayout({ children }: PropsWithChildren) {
       </Sidebar>
 
       <SidebarInset className="flex flex-col">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-md md:px-6">
+        <header 
+          className="fixed top-0 right-0 z-40 flex h-16 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-md md:px-6"
+          style={{ left: headerLeftOffset }}
+        >
           <div className="flex items-center gap-2">
             {isMobile && (
               <Button
@@ -54,7 +63,7 @@ export default function MainLayout({ children }: PropsWithChildren) {
           </div>
           <UserNav />
         </header>
-        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6 pt-20"> {/* Increased pt from 16 to 20 for h-16 header */}
           {children}
         </main>
       </SidebarInset>

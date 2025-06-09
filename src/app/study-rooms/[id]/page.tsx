@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command } from 'lucide-react';
+import { Send, Users, LogOut, Edit2, MessageSquare, Palette, AlertCircle, Loader2, Presentation, Bot, PenTool, Eraser, Trash2, Minus, Plus, GripVertical, Command, Eye, Lock } from 'lucide-react';
 import React, { useState, useEffect, FormEvent, useRef, useMemo, useCallback, use } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useParams } from 'next/navigation';
@@ -44,6 +44,7 @@ interface RoomData {
   id: string;
   name: string;
   topic: string;
+  visibility: 'public' | 'private'; // Added visibility
   members: Member[];
   memberCount: number;
   createdBy: string;
@@ -237,11 +238,12 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
 
         // Auto-join logic
         if (currentUserProfile && data.members && !data.members.find(m => m.uid === currentUserProfile.uid)) {
+          if (data.visibility === 'public') { // Only auto-join public rooms
             const newMember: Member = {
                 uid: currentUserProfile.uid,
                 name: currentUserProfile.name,
                 avatar: currentUserProfile.avatar,
-                joinedAt: Timestamp.now() // Use client-side timestamp
+                joinedAt: Timestamp.now() 
             };
             try {
                 await updateDoc(roomDocRef, {
@@ -249,11 +251,16 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
                     memberCount: increment(1),
                     updatedAt: serverTimestamp()
                 });
-                // No toast here, as onSnapshot will re-render with new member list
             } catch (joinError) {
                 console.error("Error auto-joining room:", joinError);
                 toast({title: "Failed to Join", description: "Could not automatically add you to the room's member list.", variant: "destructive"});
             }
+          } else {
+            // For private rooms, if not a member, consider redirecting or showing an access denied message.
+            // For now, we'll let them view the page, but actions might be restricted by rules.
+            // A more robust solution would check `invitedUserIds` or similar.
+            // console.log("User is not a member of this private room.");
+          }
         }
 
 
@@ -674,6 +681,9 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
 
 
   const isRoomCreator = roomData?.createdBy === currentUserProfile?.uid;
+  const VisibilityIcon = roomData?.visibility === 'private' ? Lock : Eye;
+  const visibilityText = roomData?.visibility === 'private' ? 'Private' : 'Public';
+
 
   if (authLoading || (isLoadingRoom && currentUserProfile)) { 
     return (
@@ -714,6 +724,11 @@ export default function StudyRoomDetailPage(props: { params: { id: string } }) {
         description={roomData ? `Topic: ${roomData.topic}` : 'Fetching details...'}
         actions={
           <div className="flex flex-wrap gap-2 items-center">
+            {roomData && (
+                <span className="flex items-center text-sm text-muted-foreground mr-2" title={visibilityText}>
+                    <VisibilityIcon className="mr-1.5 h-4 w-4" /> {visibilityText}
+                </span>
+            )}
             <div className="flex items-center -space-x-2 mr-2">
               {roomData?.members?.slice(0, 3).map(member => (
                 <Avatar key={member.uid} className="h-8 w-8 border-2 border-background">

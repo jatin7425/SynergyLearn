@@ -20,16 +20,20 @@ interface WeeklyGoalItem {
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
   goalOrTopic: string;
-  dailyTasks?: any[]; // Keep if present in StoredScheduleData
-  dailyScheduleGenerated?: boolean; // Keep if present in StoredScheduleData
-  summary?: string; // Keep if present in StoredScheduleData
+  dailyTasks?: any[]; 
+  dailyScheduleGenerated?: boolean; 
+  summary?: string; 
 }
 
 interface StoredScheduleData {
-  id: string; // mainSchedule
-  overallGoal: string; // This might be different from the profile's learningGoal, or redundant.
+  id: string; 
+  overallGoal: string; 
   weeklyOutline: WeeklyGoalItem[];
-  // ... other schedule fields if needed for context, though weeklyOutline is primary here
+}
+
+interface LearningGoal { // For the active learning goal from profile
+  id: string;
+  title: string;
 }
 
 type WeekStatus = 'todo' | 'inprogress' | 'done';
@@ -50,7 +54,7 @@ export default function ProgressMapPage() {
   const pathname = usePathname();
   const { toast } = useToast();
 
-  const [profileLearningGoal, setProfileLearningGoal] = useState<string | null>(null);
+  const [activeLearningGoal, setActiveLearningGoal] = useState<LearningGoal | null>(null);
   const [scheduleData, setScheduleData] = useState<StoredScheduleData | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
 
@@ -63,20 +67,31 @@ export default function ProgressMapPage() {
     }
 
     setIsLoadingData(true);
-    let goalUnsubscribe: (() => void) | null = null;
+    let profileUnsubscribe: (() => void) | null = null;
     let scheduleUnsubscribe: (() => void) | null = null;
 
-    // Fetch learning goal from profile
+    // Fetch active learning goal from profile
     const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
-    goalUnsubscribe = onSnapshot(profileRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data()?.learningGoal) {
-        setProfileLearningGoal(docSnap.data()?.learningGoal);
+    profileUnsubscribe = onSnapshot(profileRef, async (profileSnap) => {
+      const activeGoalId = profileSnap.data()?.activeLearningGoalId;
+      if (activeGoalId) {
+        const goalDocRef = doc(db, 'users', user.uid, 'learningGoals', activeGoalId);
+        const goalSnap = await getDoc(goalDocRef);
+        if (goalSnap.exists()) {
+          setActiveLearningGoal({ id: goalSnap.id, ...goalSnap.data() } as LearningGoal);
+        } else {
+          setActiveLearningGoal(null);
+          // Potentially clear schedule data if goal is invalid, or let schedule fetch handle it
+        }
       } else {
-        setProfileLearningGoal(null);
+        setActiveLearningGoal(null);
       }
+      // Don't set isLoadingData to false yet, wait for schedule
     }, (error) => {
-      console.error("Error fetching learning goal: ", error);
-      toast({ title: "Error", description: "Could not fetch learning goal.", variant: "destructive" });
+      console.error("Error fetching active learning goal: ", error);
+      toast({ title: "Error", description: "Could not fetch active learning goal.", variant: "destructive" });
+      setActiveLearningGoal(null);
+      // setIsLoadingData(false); // Potentially set false if this is the only critical data
     });
 
     // Fetch schedule data (which contains weeklyOutline)
@@ -96,7 +111,7 @@ export default function ProgressMapPage() {
     });
     
     return () => {
-      if (goalUnsubscribe) goalUnsubscribe();
+      if (profileUnsubscribe) profileUnsubscribe();
       if (scheduleUnsubscribe) scheduleUnsubscribe();
     };
 
@@ -115,11 +130,11 @@ export default function ProgressMapPage() {
         status = 'done';
       } else if (isAfter(weekStartDate, today)) {
         status = 'todo';
-      } else { // Current week: startDate is today or in past, endDate is today or in future
+      } else { 
         status = 'inprogress';
       }
       return { ...week, status };
-    }).sort((a, b) => a.weekNumber - b.weekNumber); // Ensure sorted by week number
+    }).sort((a, b) => a.weekNumber - b.weekNumber);
   }, [scheduleData]);
 
 
@@ -131,7 +146,7 @@ export default function ProgressMapPage() {
     );
   }
 
-  if (!user) { // Fallback, should be handled by useEffect redirect
+  if (!user) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
         <AlertCircle className="w-16 h-16 text-destructive mb-4" />
@@ -141,7 +156,7 @@ export default function ProgressMapPage() {
     );
   }
   
-  if (!profileLearningGoal) {
+  if (!activeLearningGoal) {
     return (
       <div className="space-y-6">
         <PageHeader title="Your Learning Journey" description="Visualize your path to success." />
@@ -149,12 +164,12 @@ export default function ProgressMapPage() {
           <CardHeader>
             <Target className="mx-auto h-12 w-12 text-muted-foreground opacity-50 mb-4" />
             <CardTitle>Set Your Main Learning Goal</CardTitle>
-            <CardDescription>Define your primary learning objective to start your journey map. This can be set on the Roadmap page.</CardDescription>
+            <CardDescription>Define and activate a learning objective on the Roadmap page to see your journey map.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/roadmap/new" passHref>
+            <Link href="/roadmap" passHref>
               <Button>
-                <PlusCircle className="mr-2 h-4 w-4" /> Set Learning Goal
+                <PlusCircle className="mr-2 h-4 w-4" /> Go to Roadmap
               </Button>
             </Link>
           </CardContent>
@@ -166,7 +181,7 @@ export default function ProgressMapPage() {
   if (!scheduleData || !scheduleData.weeklyOutline || scheduleData.weeklyOutline.length === 0) {
      return (
       <div className="space-y-6">
-        <PageHeader title="Your Learning Journey" description={`Goal: ${profileLearningGoal}`} />
+        <PageHeader title="Your Learning Journey" description={`Goal: ${activeLearningGoal.title}`} />
         <Card>
           <CardHeader className="text-center">
             <CalendarDays className="mx-auto h-12 w-12 text-muted-foreground opacity-50 mb-4" />
@@ -186,11 +201,10 @@ export default function ProgressMapPage() {
 
   return (
     <div className="space-y-6 w-full">
-      <PageHeader title="Your Learning Journey" description={`Goal: ${profileLearningGoal}`} />
+      <PageHeader title="Your Learning Journey" description={`Active Goal: ${activeLearningGoal.title}`} />
 
       <div className="overflow-x-auto pb-4">
           <div className="flex items-start py-8 px-4 min-w-max space-x-4">
-            {/* Start Point */}
             <div className="flex flex-col items-center space-y-2 flex-shrink-0 pt-12">
                 <div className="h-8 w-8 bg-primary rounded-full flex items-center justify-center text-primary-foreground shadow-md">
                     <Target size={18} />
@@ -198,20 +212,17 @@ export default function ProgressMapPage() {
                 <p className="text-xs font-semibold text-primary">Start</p>
             </div>
 
-            {/* Weekly Goal Cards */}
             {mappedWeeklyGoals.map((week) => {
               const config = statusConfig[week.status];
               const Icon = config.icon;
               return (
                 <React.Fragment key={`week-${week.weekNumber}`}>
-                  {/* Connecting Line */}
                   <div className={cn(
-                      "flex-grow h-1 mt-[58px]", // Align with middle of icon
+                      "flex-grow h-1 mt-[58px]", 
                       week.status === 'done' ? 'bg-green-500' : 'bg-border',
                       "min-w-[50px] md:min-w-[80px]"
                   )} />
 
-                  {/* Weekly Goal Node */}
                   <div className="flex flex-col items-center space-y-2 flex-shrink-0">
                     <div className={cn("h-8 w-8 rounded-full flex items-center justify-center shadow-md", config.bgColor, config.borderColor, "border-2")}>
                       <Icon size={18} className={cn(config.color, config.animate && "animate-spin")} />
@@ -233,14 +244,12 @@ export default function ProgressMapPage() {
               );
             })}
 
-            {/* Connecting Line to Goal */}
             <div className={cn(
                 "flex-grow h-1 mt-[58px]",
                 mappedWeeklyGoals.every(w => w.status === 'done') ? 'bg-green-500' : 'bg-border',
                 "min-w-[50px] md:min-w-[80px]"
             )} />
             
-            {/* Goal / End Point */}
              <div className="flex flex-col items-center space-y-2 flex-shrink-0 pt-12">
                 <div className={cn(
                     "h-10 w-10 rounded-full flex items-center justify-center text-primary-foreground shadow-xl",
@@ -251,7 +260,7 @@ export default function ProgressMapPage() {
                 <p className={cn(
                     "text-sm font-bold w-40 text-center truncate",
                      mappedWeeklyGoals.every(w => w.status === 'done') ? 'text-green-600' : 'text-primary'
-                )}>{profileLearningGoal}</p>
+                )}>{activeLearningGoal.title}</p>
             </div>
           </div>
         </div>

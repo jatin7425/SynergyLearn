@@ -5,60 +5,129 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Helper function to check if a user is an admin
-    // For prototype, hardcoding the admin UID. In production, use custom claims.
     function isAdmin(userId) {
       return userId == 'Mcjp0wyJVcal3ocfav9aMOHzNzV2'; // Replace with your actual admin UID
     }
+    
+    // Helper function to check if a user is the owner of a document
+    function isOwner(userId, resource) {
+      return request.auth.uid == userId || request.auth.uid == resource.data.ownerUid;
+    }
 
-    // User specific data (notes, milestones, etc.)
+    // User Profiles
+    match /userProfiles/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin(request.auth.uid));
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      // No delete for user profiles through client for safety
+    }
+    
+    // User-specific subcollections (notes, milestones, schedule, etc.)
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // User profiles (created during sign-up)
-    match /userProfiles/{profileUserId} {
-      // Allow user to read/write their own profile
-      // Allow admin to read any user profile
-      allow read: if request.auth != null && (request.auth.uid == profileUserId || isAdmin(request.auth.uid));
-      allow write: if request.auth != null && request.auth.uid == profileUserId; // Only user can write their own profile
+    // Learning Goals
+    match /users/{userId}/learningGoals/{goalId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+        // Milestones subcollection under each goal
+        match /milestones/{milestoneId} {
+            allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
     }
     
+    // User Profile (main sub-document, e.g., for learningGoal)
+    match /users/{userId}/profile/main {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Shared Note Links:
+    // Allow anyone authenticated to read a link document (to get noteId and ownerUid)
+    // Creation is done by note owner (implicitly via backend/function if we had one, or client with rule on noteId)
+    // Deletion is done by note owner.
+    match /sharedNoteLinks/{linkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      // No updates to links, they are created and deleted.
+    }
+    // Actual shared note content access is governed by /users/{ownerUid}/notes/{noteId} with checks
+    // Potentially add a rule here that checks if a sharedLink exists for that noteId/ownerUid.
+
     // Study Rooms
     match /studyRooms/{roomId} {
-      allow read: if request.auth != null; // Any authenticated user can read room details (e.g., to list them)
-      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid; // User can create if they are the creator
-      allow update: if request.auth != null && 
-                      (request.resource.data.createdBy == request.auth.uid || // Creator can update
-                       request.resource.data.members.hasAny([request.auth.uid])); // Or members can update (e.g. drawing on whiteboard, adding themselves to members list)
-                                                                                // More granular control might be needed for specific fields (e.g. only creator can change name/topic)
+      // Anyone authenticated can read public room details or if they are a member of a private room
+      allow read: if request.auth != null && (resource.data.visibility == 'public' || request.auth.uid in resource.data.members.map(m => m.uid)); 
+      
+      // Anyone authenticated can create a new room
+      allow create: if request.auth != null 
+                    && request.resource.data.createdBy == request.auth.uid
+                    && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+                    && request.resource.data.topic is string && request.resource.data.topic.size() > 0 && request.resource.data.topic.size() <= 200
+                    && request.resource.data.visibility is string && (request.resource.data.visibility == 'public' || request.resource.data.visibility == 'private')
+                    && request.resource.data.memberCount == 1
+                    && request.resource.data.members[0].uid == request.auth.uid
+                    && request.resource.data.members[0].name is string
+                    && request.resource.data.whiteboardDrawing is list; // Ensure whiteboardDrawing is initialized
+
+      // Only room creator can update basic room info (name, topic, visibility)
+      // Members can be updated via arrayUnion/arrayRemove by authenticated users (e.g., joining/leaving)
+      // Whiteboard drawing can be updated by any member
+      allow update: if request.auth != null && (
+                      (
+                        // Updating name, topic, visibility by creator
+                        request.resource.data.name == resource.data.name || 
+                        request.resource.data.topic == resource.data.topic ||
+                        request.resource.data.visibility == resource.data.visibility 
+                      ) && resource.data.createdBy == request.auth.uid ||
+                      // Updating members list (join/leave) by any authenticated user for public rooms
+                      // or by existing members for private rooms.
+                      // More granular control might be needed if invites are added.
+                      (
+                        request.resource.data.members != resource.data.members ||
+                        request.resource.data.memberCount != resource.data.memberCount
+                      ) && (resource.data.visibility == 'public' || request.auth.uid in resource.data.members.map(m => m.uid)) ||
+                      // Updating whiteboard by any member
+                      request.resource.data.whiteboardDrawing != resource.data.whiteboardDrawing && request.auth.uid in resource.data.members.map(m => m.uid)
+                    );
+                    
+      // No client-side delete for rooms to prevent accidental deletion by non-creators.
+      // Deletion should be an admin function or restricted to creator via a backend process.
+      allow delete: if false; // Or: if request.auth.uid == resource.data.createdBy;
+
+      // Messages subcollection
+      match /messages/{messageId} {
+        // Only members of the room can read messages
+        allow read: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/studyRooms/$(roomId)).data.members.map(m => m.uid);
+        // Only members of the room can create messages
+        allow create: if request.auth != null 
+                      && request.auth.uid in get(/databases/$(database)/documents/studyRooms/$(roomId)).data.members.map(m => m.uid)
+                      && request.resource.data.userId == request.auth.uid
+                      && request.resource.data.text is string && request.resource.data.text.size() > 0;
+        // Only the user who sent the message can update/delete it (or AI for its own messages, handled by userId check)
+        allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      }
     }
 
-    match /studyRooms/{roomId}/messages/{messageId} {
-      allow read: if request.auth != null; // Any authenticated user in the room context (implicitly) can read messages
-      allow create: if request.auth != null && 
-                      (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'AI_ASSISTANT'); // User can create their own messages, or AI can
-      allow update: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can edit
-      allow delete: if request.auth != null && request.resource.data.userId == request.auth.uid; // Only message owner can delete
-    }
-
-    // Shared Note Links - public read for link ID, only owner creates/deletes
-    match /sharedNoteLinks/{linkId} {
-      allow read: if true; // Anyone with the linkId can read it to get noteId and ownerUid
-      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid; 
-      // No update needed for links, they are static references
-    }
-    
-    // Admin Configuration
-    match /adminConfig/{configDocId} {
-      allow read: if request.auth != null; // Any authenticated user can read (e.g., flows reading model ID)
+    // AI Model Configuration (admin only)
+    match /adminConfig/modelSelection {
+      allow read: if request.auth != null; // Any authenticated user can read (client needs to know current model)
       allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write
     }
-
-     // System Agents (like AI Helper profile)
-    match /systemAgents/{agentId} {
-      allow read: if true; // Publicly readable (e.g., by study room to get AI helper details)
-      allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admin can write/update these profiles
+    
+    // Audit Logs (admin only for read/create)
+    match /auditLogs/{logId} {
+      allow read, create: if request.auth != null && isAdmin(request.auth.uid);
+      allow update, delete: if false; // Logs should be immutable from client
     }
+
+    // System Agents (e.g., AI Helper Profile)
+    // Allow authenticated users to read (e.g., for AI avatar/name in chat)
+    // Allow admin to create/update (e.g., from settings page)
+    match /systemAgents/{agentId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && isAdmin(request.auth.uid);
+    }
+
   }
 }

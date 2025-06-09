@@ -16,12 +16,12 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 const MODEL_CONFIG_PATH = 'adminConfig/modelSelection';
-const DEFAULT_MODEL_ID = 'googleai/gemini-2.0-flash'; // Fallback Genkit model
+const DEFAULT_MODEL_ID = 'googleai/gemini-2.0-flash'; 
 
 const SuggestLearningMilestonesInputSchema = z.object({
-  goal: z.string().describe('The overall learning goal of the user.'),
-  currentSkills: z.string().describe('The current skills of the user.'),
-  learningPreferences: z.string().describe('The learning preferences of the user.'),
+  goal: z.string().describe('The overall learning goal of the user (typically the title of their active goal).'),
+  currentSkills: z.string().optional().describe('The current skills of the user.'),
+  learningPreferences: z.string().optional().describe('The learning preferences of the user.'),
 });
 
 export type SuggestLearningMilestonesInput = z.infer<typeof SuggestLearningMilestonesInputSchema>;
@@ -41,18 +41,16 @@ export async function suggestLearningMilestones(input: SuggestLearningMilestones
 const suggestLearningMilestonesPrompt = ai.definePrompt({
   name: 'suggestLearningMilestonesPrompt',
   input: {schema: SuggestLearningMilestonesInputSchema},
-  // This specific output schema is for when Genkit's prompt is used directly.
-  // HF API will return a different structure that we parse.
   output: {schema: z.object({ milestones: z.array(z.string()) }) },
   prompt: `You are an AI learning assistant. Your goal is to help users achieve their learning goals by suggesting a list of milestones.
 
   Consider the user's current skills, learning preferences, and overall goal when suggesting milestones.
 
   Goal: {{{goal}}}
-  Current Skills: {{{currentSkills}}}
-  Learning Preferences: {{{learningPreferences}}}
+  Current Skills: {{#if currentSkills}}{{{currentSkills}}}{{else}}Not specified{{/if}}
+  Learning Preferences: {{#if learningPreferences}}{{{learningPreferences}}}{{else}}Not specified{{/if}}
 
-  Suggest a list of milestones to achieve the goal. Ensure the output is an array of strings under the 'milestones' key.
+  Suggest a list of 5-7 concise learning milestones to achieve the goal. Ensure the output is an array of strings under the 'milestones' key.
   `,
 });
 
@@ -66,6 +64,10 @@ const suggestLearningMilestonesFlow = ai.defineFlow(
     let selectedModelName = DEFAULT_MODEL_ID;
     let routingReason = `Fallback to default Genkit model: ${DEFAULT_MODEL_ID}`;
     let generatedMilestones: string[] = ["Failed to generate milestones."];
+
+    if (!input.goal) {
+        return { milestones: ["Cannot suggest milestones without a goal."], modelUsed: selectedModelName, routingReason: "Input goal was empty." };
+    }
 
     try {
       const configDocRef = doc(db, MODEL_CONFIG_PATH);
@@ -108,7 +110,7 @@ Suggested Milestones:`;
           }
           const result = await response.json();
           if (result.generated_text) {
-            generatedMilestones = result.generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
+            generatedMilestones = result.generated_text.split('\\n').map((m: string) => m.trim()).filter((m: string) => m);
           } else {
             console.error("Local HF API response did not contain 'generated_text'. Response:", result);
             generatedMilestones = ["Local HF API did not return expected format."];
@@ -134,11 +136,10 @@ Suggested Milestones:`;
             throw new Error(`Public HF API request failed with status ${response.status}: ${errorText}`);
           }
           const result = await response.json();
-          // HF API often returns an array with one object containing generated_text
           if (Array.isArray(result) && result[0] && result[0].generated_text) {
-            generatedMilestones = result[0].generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
-          } else if (result.generated_text) { // Some models might return it directly
-             generatedMilestones = result.generated_text.split('\n').map((m: string) => m.trim()).filter((m: string) => m);
+            generatedMilestones = result[0].generated_text.split('\\n').map((m: string) => m.trim()).filter((m: string) => m);
+          } else if (result.generated_text) { 
+             generatedMilestones = result.generated_text.split('\\n').map((m: string) => m.trim()).filter((m: string) => m);
           } else {
             console.error("Public HF API response did not contain 'generated_text'. Response:", result);
             generatedMilestones = ["Public HF API did not return expected format."];
@@ -148,9 +149,8 @@ Suggested Milestones:`;
           generatedMilestones = [`Error with Public HF API: ${(hfError as Error).message}`];
         }
       } else {
-        console.warn(`SuggestMilestones: Hugging Face model ${selectedModelName} selected, but no LOCAL_HUGGING_FACE_API_URL or HUGGING_FACE_API_KEY is configured. Falling back to Genkit default for now, but this is likely not what you want for HF.`);
+        console.warn(`SuggestMilestones: Hugging Face model ${selectedModelName} selected, but no LOCAL_HUGGING_FACE_API_URL or HUGGING_FACE_API_KEY is configured. Falling back to Genkit default.`);
         routingReason = `HF Model ${selectedModelName} chosen, but no API key/local URL. Using Genkit default.`;
-        // Fall through to Genkit prompt as a last resort if HF config is missing
         try {
           const {output} = await suggestLearningMilestonesPrompt(input, { model: DEFAULT_MODEL_ID as any });
           if (output?.milestones) {
@@ -162,7 +162,6 @@ Suggested Milestones:`;
         }
       }
     } else {
-      // Use Genkit's ai.generate() for Google AI or Ollama models
       console.log(`SuggestMilestones: Using Genkit provider for model: ${selectedModelName}`);
       try {
         const {output} = await suggestLearningMilestonesPrompt(input, { model: selectedModelName as any });

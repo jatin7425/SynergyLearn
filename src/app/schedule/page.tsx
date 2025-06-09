@@ -18,12 +18,24 @@ import { useToast } from '@/hooks/use-toast';
 import { generateWeeklyOutline, type GenerateWeeklyOutlineInput, type GenerateWeeklyOutlineOutput, type WeeklyGoalItem } from '@/ai/flows/generate-weekly-outline';
 import { generateDailyTasks, type GenerateDailyTasksInput, type GenerateDailyTasksOutput, type DailyTask } from '@/ai/flows/generate-daily-tasks';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, Timestamp, onSnapshot, updateDoc, arrayUnion, query, where, orderBy } from 'firebase/firestore';
 import { format, parseISO, startOfDay, endOfDay, differenceInSeconds, isWithinInterval, addDays } from 'date-fns';
+import Link from 'next/link';
+
+// Define LearningGoal interface (can be moved to a shared types file later)
+interface LearningGoal {
+  id: string;
+  title: string;
+  description?: string;
+  isArchived: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
 
 interface StoredScheduleData {
   id: string; // mainSchedule
-  overallGoal: string;
+  overallGoalId: string | null; // Changed from overallGoal
+  overallGoalTitle: string;    // Added to store the title
   overallDuration: '1 month' | '1 year' | '2 years';
   workingDayStartTime: string;
   workingDayEndTime: string;
@@ -75,46 +87,25 @@ const formatDuration = (totalSeconds: number, style: 'hms' | 'hm' = 'hms'): stri
   }
 };
 
-// Helper function to parse duration strings like "2 hours", "1.5 hours", "90 minutes" to minutes
 const parseDurationStringToMinutes = (durationStr?: string): number => {
   if (!durationStr || typeof durationStr !== 'string') return 0;
-
   let totalMinutes = 0;
   const durationLowerCase = durationStr.toLowerCase();
-
-  // Match "X hours Y minutes" or "X hr Y min"
   const fullMatch = durationLowerCase.match(/(?:(\d*\.?\d+)\s*(?:hours?|hr))?\s*(?:(\d+)\s*(?:minutes?|min))?/);
   if (fullMatch) {
-    if (fullMatch[1]) { // Hours part
-      totalMinutes += parseFloat(fullMatch[1]) * 60;
-    }
-    if (fullMatch[2]) { // Minutes part
-      totalMinutes += parseInt(fullMatch[2], 10);
-    }
-    // If neither hours nor minutes were matched but there was a full match (e.g. "Rest Day"), return 0
-    if (totalMinutes > 0) {
-      return Math.round(totalMinutes);
-    }
+    if (fullMatch[1]) totalMinutes += parseFloat(fullMatch[1]) * 60;
+    if (fullMatch[2]) totalMinutes += parseInt(fullMatch[2], 10);
+    if (totalMinutes > 0) return Math.round(totalMinutes);
   }
-
-  // If no explicit "hours" or "minutes" were found, try to parse a single number
-  // This is less reliable and assumes AI gives explicit units.
-  // If AI says "2.5", assume hours. If AI says "150", assume minutes if it is a large number.
   const singleNumberMatch = durationLowerCase.match(/^(\d*\.?\d+)$/);
   if (singleNumberMatch && singleNumberMatch[1]) {
     const num = parseFloat(singleNumberMatch[1]);
     if (!isNaN(num)) {
-      // Heuristic: if number < 10 and has decimal, or < 5, assume hours. Else assume minutes.
-      if ((num < 10 && durationStr.includes('.')) || num <= 5) {
-        totalMinutes = num * 60;
-      } else {
-        totalMinutes = num;
-      }
+      if ((num < 10 && durationStr.includes('.')) || num <= 5) totalMinutes = num * 60;
+      else totalMinutes = num;
       return Math.round(totalMinutes);
     }
   }
-
-  // If it's a non-parsable string like "Rest Day" or "Flexible", it will return 0.
   return 0;
 };
 
@@ -125,7 +116,12 @@ export default function SchedulePage() {
   const pathname = usePathname();
   const { toast } = useToast();
 
-  const [learningGoal, setLearningGoal] = useState('');
+  const [allUserGoals, setAllUserGoals] = useState<LearningGoal[]>([]);
+  const [activeGoalIdFromProfile, setActiveGoalIdFromProfile] = useState<string | null>(null);
+  
+  const [selectedScheduleGoalId, setSelectedScheduleGoalId] = useState<string | null>(null);
+  const [scheduleGoalTitle, setScheduleGoalTitle] = useState('');
+
   const [scheduleDuration, setScheduleDuration] = useState<'1 month' | '1 year' | '2 years'>('1 month');
   const [workingDayStartTime, setWorkingDayStartTime] = useState('09:00');
   const [workingDayEndTime, setWorkingDayEndTime] = useState('17:00');
@@ -147,7 +143,6 @@ export default function SchedulePage() {
   const [timeTrackingState, setTimeTrackingState] = useState<TimeTrackingState | null>(null);
   const [isLoadingTimeState, setIsLoadingTimeState] = useState(true);
 
-  // For live display
   const [currentSessionDisplay, setCurrentSessionDisplay] = useState("00:00:00");
   const [currentBreakDisplay, setCurrentBreakDisplay] = useState("00:00:00");
   const [currentLunchDisplay, setCurrentLunchDisplay] = useState("00:00:00");
@@ -163,18 +158,29 @@ export default function SchedulePage() {
     );
   };
 
-  const fetchLearningGoalFromProfile = useCallback(async () => {
+  // Fetch all learning goals and active profile goal
+  useEffect(() => {
     if (!user) return;
-    try {
-      const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
-      const docSnap = await getDoc(profileRef);
-      if (docSnap.exists() && docSnap.data()?.learningGoal) {
-        setLearningGoal(docSnap.data()?.learningGoal);
-      }
-    } catch (error) {
-      console.error("Error fetching learning goal: ", error);
-    }
+    
+    const goalsColRef = collection(db, 'users', user.uid, 'learningGoals');
+    const qGoals = query(goalsColRef, where('isArchived', '==', false), orderBy('createdAt', 'desc'));
+    const unsubscribeGoals = onSnapshot(qGoals, (snapshot) => {
+      const fetchedGoals: LearningGoal[] = [];
+      snapshot.forEach(doc => fetchedGoals.push({ id: doc.id, ...doc.data() } as LearningGoal));
+      setAllUserGoals(fetchedGoals);
+    });
+
+    const profileRef = doc(db, 'users', user.uid, 'profile', 'main');
+    const unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
+      setActiveGoalIdFromProfile(docSnap.data()?.activeLearningGoalId || null);
+    });
+    
+    return () => {
+      unsubscribeGoals();
+      unsubscribeProfile();
+    };
   }, [user]);
+
 
   useEffect(() => {
     if (authLoading) return;
@@ -183,14 +189,23 @@ export default function SchedulePage() {
       router.push(`/login?redirect=${pathname}`);
       return;
     }
-    fetchLearningGoalFromProfile();
 
     const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
     const unsubscribeSchedule = onSnapshot(scheduleDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = { id: docSnap.id, ...docSnap.data() } as StoredScheduleData;
         setStoredScheduleData(data);
-        setLearningGoal(data.overallGoal);
+        
+        setScheduleGoalTitle(data.overallGoalTitle || '');
+        // Prioritize stored schedule goal ID, then profile active ID, then first available goal, then null
+        const initialSelectedId = data.overallGoalId || activeGoalIdFromProfile || (allUserGoals.length > 0 ? allUserGoals[0].id : null);
+        setSelectedScheduleGoalId(initialSelectedId);
+        if (initialSelectedId && !data.overallGoalTitle) { // If ID present but title missing in DB, derive it
+            const foundGoal = allUserGoals.find(g => g.id === initialSelectedId);
+            setScheduleGoalTitle(foundGoal?.title || '');
+        }
+
+
         setScheduleDuration(data.overallDuration);
         setWorkingDayStartTime(data.workingDayStartTime || '09:00');
         setWorkingDayEndTime(data.workingDayEndTime || '17:00');
@@ -203,8 +218,6 @@ export default function SchedulePage() {
           if (!selectedWeekNumberForDetails && data.weeklyOutline[0]) {
             setSelectedWeekNumberForDetails(data.weeklyOutline[0].weekNumber);
           }
-
-          // ✅ only switch automatically once
           if (!hasAutoSwitchedTab.current) {
             hasAutoSwitchedTab.current = true;
             setActiveMainTab("weeklyDetails");
@@ -212,13 +225,24 @@ export default function SchedulePage() {
         } else {
           setSelectedWeekNumberForDetails(null);
           setActiveMainTab("configure");
-          hasAutoSwitchedTab.current = false; // allow switching again if schedule gets cleared
+          hasAutoSwitchedTab.current = false;
         }
-
       } else {
         setStoredScheduleData(null);
         setSelectedWeekNumberForDetails(null);
         setActiveMainTab("configure");
+        // Set default goal for new schedule config if profile has active goal
+        if (activeGoalIdFromProfile && allUserGoals.length > 0) {
+            const activeProfGoal = allUserGoals.find(g => g.id === activeGoalIdFromProfile);
+            setSelectedScheduleGoalId(activeGoalIdFromProfile);
+            setScheduleGoalTitle(activeProfGoal?.title || '');
+        } else if (allUserGoals.length > 0) { // Or first available goal
+            setSelectedScheduleGoalId(allUserGoals[0].id);
+            setScheduleGoalTitle(allUserGoals[0].title || '');
+        } else {
+            setSelectedScheduleGoalId(null);
+            setScheduleGoalTitle('');
+        }
       }
       setIsLoadingStoredSchedule(false);
     }, (error) => {
@@ -261,14 +285,12 @@ export default function SchedulePage() {
       unsubscribeSchedule();
       unsubscribeTimeState();
     };
-  }, [user, authLoading, router, pathname, toast, fetchLearningGoalFromProfile, activeMainTab]);
+  }, [user, authLoading, router, pathname, toast, activeGoalIdFromProfile, allUserGoals]);
 
-  // Live timer effect for current session/break/lunch
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
-
     if (timeTrackingState) {
-      const now = new Date();
       if (timeTrackingState.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
         intervalId = setInterval(() => {
           const elapsedSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime!.toDate());
@@ -301,20 +323,15 @@ export default function SchedulePage() {
     return () => clearInterval(intervalId);
   }, [timeTrackingState]);
 
-
-  // Effect for total study time today
   useEffect(() => {
     if (!user) return;
-
     const today_start = startOfDay(new Date());
     const today_end = endOfDay(new Date());
-
     const logsCollectionRef = collection(db, 'users', user.uid, 'timeTrackingLogs');
     const q = query(logsCollectionRef,
       where('startTime', '>=', Timestamp.fromDate(today_start)),
       where('startTime', '<=', Timestamp.fromDate(today_end))
     );
-
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let accumulatedMinutesToday = 0;
       snapshot.forEach((doc) => {
@@ -323,67 +340,38 @@ export default function SchedulePage() {
           accumulatedMinutesToday += log.durationMinutes;
         }
       });
-
       if (timeTrackingState?.status === 'clocked_in' && timeTrackingState.lastClockInTime) {
         const liveSessionSeconds = differenceInSeconds(new Date(), timeTrackingState.lastClockInTime.toDate());
-        // Add only the current session's portion that hasn't been logged yet if it's still active.
-        // This logic needs to be careful not to double count if a log for this session already partially exists.
-        // For simplicity, if clocked_in, this adds the live part of the current session to already logged parts.
-        // If handleClockOut correctly logs the full duration, this might slightly over-count during the final second before clock out.
-        // A more robust way would be to exclude the currentSessionId from the sum if it's active.
-        // However, the current query is for *all* logs *today*.
-
-        // Let's assume durationMinutes in the log is the final one.
-        // If currentSessionId matches a log, subtract its durationMinutes (if any)
-        // and add the live calculation. This prevents double counting.
-
         let liveMinutes = Math.floor(liveSessionSeconds / 60);
-
-        if (timeTrackingState.currentSessionId) {
-          const currentSessionLog = snapshot.docs.find(d => d.id === timeTrackingState.currentSessionId)?.data() as TimeLog | undefined;
-          if (currentSessionLog && currentSessionLog.durationMinutes && !currentSessionLog.endTime) {
-            // Current session is in logs but not ended. Don't add its partial durationMinutes from DB.
-            // The `accumulatedMinutesToday` would have already added it if it was completed.
-            // So, just add liveMinutes to sum of *other* completed sessions.
-          }
-        }
         setTotalMinutesStudiedToday(accumulatedMinutesToday + liveMinutes);
-
       } else {
         setTotalMinutesStudiedToday(accumulatedMinutesToday);
       }
     });
-
     return () => unsubscribe();
   }, [user, timeTrackingState]);
 
-  // Effect for "Time to Cover / Overtime"
   useEffect(() => {
     if (!user || isLoadingStoredSchedule) {
       setTimeDifferenceDisplay("Calculating...");
       return;
     }
-
     const today = new Date();
     const todayFormatted = format(today, 'yyyy-MM-dd');
     let currentDayEstimatedMinutes = 0;
     let statusMessage = "Calculating...";
-
     if (storedScheduleData?.weeklyOutline) {
       const currentWeekData = storedScheduleData.weeklyOutline.find(week => {
         const weekStart = parseISO(week.startDate);
-        const weekEnd = parseISO(week.endDate); // date-fns isWithinInterval is inclusive of start, exclusive of end by default
+        const weekEnd = parseISO(week.endDate);
         return isWithinInterval(today, { start: weekStart, end: addDays(weekEnd, 1) });
       });
-
       if (currentWeekData && currentWeekData.dailyTasks && currentWeekData.dailyTasks.length > 0) {
         const todaysTasks = currentWeekData.dailyTasks.filter(task => task.date === todayFormatted && task.topic?.toLowerCase() !== "rest day");
-
         if (todaysTasks.length > 0) {
           currentDayEstimatedMinutes = todaysTasks.reduce((sum, task) => sum + parseDurationStringToMinutes(task.estimatedDuration), 0);
           setTotalEstimatedMinutesForToday(currentDayEstimatedMinutes);
-
-          if (currentDayEstimatedMinutes === 0) { // Tasks might exist but have 0 duration (e.g. "Quick Review")
+          if (currentDayEstimatedMinutes === 0) {
             statusMessage = "Today's tasks have no specific estimated time.";
           } else {
             const difference = currentDayEstimatedMinutes - totalMinutesStudiedToday;
@@ -413,25 +401,22 @@ export default function SchedulePage() {
       setTotalEstimatedMinutesForToday(0);
     }
     setTimeDifferenceDisplay(statusMessage);
-
   }, [user, totalMinutesStudiedToday, storedScheduleData, isLoadingStoredSchedule]);
 
 
   const handleGenerateWeeklyOutline = async (e: FormEvent) => {
     e.preventDefault();
-    if (!learningGoal.trim() || !workingDayStartTime || !workingDayEndTime) {
+    if (!scheduleGoalTitle.trim() || !workingDayStartTime || !workingDayEndTime) {
       toast({ title: "Missing Information", description: "Learning goal and working day start/end times are required.", variant: "destructive" });
       return;
     }
     if (!user) return;
-
     setIsLoadingWeeklyOutline(true);
     setSelectedWeekNumberForDetails(null);
-
     try {
       const startDateForOutline = format(new Date(), 'yyyy-MM-dd');
       const input: GenerateWeeklyOutlineInput = {
-        overallLearningGoal: learningGoal,
+        overallLearningGoal: scheduleGoalTitle, // Use title for AI
         scheduleDuration,
         workingDayStartTime,
         workingDayEndTime,
@@ -442,12 +427,12 @@ export default function SchedulePage() {
         startDateForOutline
       };
       const result: GenerateWeeklyOutlineOutput = await generateWeeklyOutline(input);
-
       const outlineWithEmptyTasks = result.weeklyOutline.map(week => ({ ...week, dailyTasks: [], dailyScheduleGenerated: false, summary: week.summary || '' }));
-
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
-      const dataToSave = {
-        overallGoal: learningGoal,
+      const dataToSave: StoredScheduleData = {
+        id: 'mainSchedule', // Assuming this is the intended ID
+        overallGoalId: selectedScheduleGoalId, // Save selected goal ID
+        overallGoalTitle: scheduleGoalTitle, // Save selected goal title
         overallDuration: scheduleDuration,
         workingDayStartTime,
         workingDayEndTime,
@@ -457,19 +442,16 @@ export default function SchedulePage() {
         utilizeHolidays,
         startDateForOutline,
         weeklyOutline: outlineWithEmptyTasks,
-        createdAt: storedScheduleData?.createdAt || serverTimestamp(),
-        updatedAt: serverTimestamp()
+        createdAt: storedScheduleData?.createdAt || serverTimestamp() as Timestamp,
+        updatedAt: serverTimestamp() as Timestamp
       };
-
       await setDoc(scheduleDocRef, dataToSave, { merge: true });
-
       if (outlineWithEmptyTasks.length > 0) {
         setSelectedWeekNumberForDetails(outlineWithEmptyTasks[0].weekNumber);
         setActiveMainTab("weeklyDetails");
       } else {
         setActiveMainTab("configure");
       }
-
       toast({ title: "Weekly Outline Generated!", description: "Your high-level weekly plan is ready." });
     } catch (error) {
       console.error('Error generating weekly outline:', error);
@@ -479,10 +461,15 @@ export default function SchedulePage() {
     }
   };
 
+  const handleScheduleGoalChange = (goalId: string) => {
+    setSelectedScheduleGoalId(goalId);
+    const selectedGoal = allUserGoals.find(g => g.id === goalId);
+    setScheduleGoalTitle(selectedGoal?.title || '');
+  };
+
   const handleGenerateDailyTasksForWeek = async (week: WeeklyGoalItem) => {
     if (!user || !storedScheduleData) return;
     setIsLoadingDailyTasksForWeek(week.weekNumber);
-
     try {
       const input: GenerateDailyTasksInput = {
         periodGoal: week.goalOrTopic,
@@ -495,21 +482,17 @@ export default function SchedulePage() {
         holidayEndTime: storedScheduleData.holidayEndTime,
         utilizeHolidays: storedScheduleData.utilizeHolidays,
       };
-
       const result: GenerateDailyTasksOutput = await generateDailyTasks(input);
-
       const updatedWeeklyOutline = storedScheduleData.weeklyOutline.map(w =>
         w.weekNumber === week.weekNumber
           ? { ...w, dailyTasks: result.tasks, dailyScheduleGenerated: true, summary: result.summary || w.summary }
           : w
       );
-
       const scheduleDocRef = doc(db, 'users', user.uid, 'schedule', 'mainSchedule');
       await updateDoc(scheduleDocRef, {
         weeklyOutline: updatedWeeklyOutline,
         updatedAt: serverTimestamp()
       });
-
       toast({ title: `Daily Plan for Week ${week.weekNumber} Generated!`, description: `Topic: ${week.goalOrTopic}` });
     } catch (error) {
       console.error(`Error generating daily tasks for week ${week.weekNumber}:`, error);
@@ -532,7 +515,6 @@ export default function SchedulePage() {
 
   const handleClockIn = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_out') return;
-
     const newSessionId = doc(collection(db, 'users', user.uid, 'timeTrackingLogs')).id;
     const newLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', newSessionId);
     const newLog = {
@@ -542,7 +524,6 @@ export default function SchedulePage() {
       durationMinutes: 0,
       activities: []
     };
-
     try {
       await setDoc(newLogRef, newLog);
       await updateTimeTrackingState({
@@ -560,14 +541,12 @@ export default function SchedulePage() {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId || !timeTrackingState.lastClockInTime) {
       return
     };
-
     const now = Timestamp.now();
     let durationMinutes = 0;
     if (timeTrackingState.lastClockInTime) {
       const lastClockInDate = (timeTrackingState.lastClockInTime as Timestamp).toDate();
       durationMinutes = Math.round((now.toMillis() - lastClockInDate.getTime()) / (1000 * 60));
     }
-
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
       await updateDoc(sessionLogRef, {
@@ -578,7 +557,7 @@ export default function SchedulePage() {
         status: 'clocked_out',
         lastClockInTime: null,
         currentSessionId: null,
-        lastBreakStartTime: null, // Clear break/lunch times on clock out
+        lastBreakStartTime: null,
         lastLunchStartTime: null
       });
     } catch (error) {
@@ -589,7 +568,6 @@ export default function SchedulePage() {
 
   const handleStartBreak = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
-
     const breakActivity = { type: 'break_start', timestamp: Timestamp.now() };
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
@@ -603,7 +581,6 @@ export default function SchedulePage() {
 
   const handleEndBreak = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'on_break' || !timeTrackingState.currentSessionId) return;
-
     const breakEndActivity = { type: 'break_end', timestamp: Timestamp.now() };
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
@@ -617,7 +594,6 @@ export default function SchedulePage() {
 
   const handleStartLunch = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'clocked_in' || !timeTrackingState.currentSessionId) return;
-
     const lunchActivity = { type: 'lunch_start', timestamp: Timestamp.now() };
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
@@ -631,7 +607,6 @@ export default function SchedulePage() {
 
   const handleEndLunch = async () => {
     if (!user || !timeTrackingState || timeTrackingState.status !== 'on_lunch' || !timeTrackingState.currentSessionId) return;
-
     const lunchEndActivity = { type: 'lunch_end', timestamp: Timestamp.now() };
     const sessionLogRef = doc(db, 'users', user.uid, 'timeTrackingLogs', timeTrackingState.currentSessionId);
     try {
@@ -643,7 +618,7 @@ export default function SchedulePage() {
     }
   };
 
-  if (authLoading || isLoadingStoredSchedule || isLoadingTimeState) {
+  if (authLoading || isLoadingStoredSchedule || isLoadingTimeState || (user && allUserGoals.length === 0 && activeGoalIdFromProfile === null && !storedScheduleData)) { // Added complex loading condition
     return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -719,8 +694,34 @@ export default function SchedulePage() {
             <CardContent>
               <form onSubmit={handleGenerateWeeklyOutline} className="space-y-4">
                 <div>
-                  <Label htmlFor="learningGoal">Primary Learning Goal</Label>
-                  <Input id="learningGoal" value={learningGoal} onChange={(e) => setLearningGoal(e.target.value)} placeholder="e.g., Master Next.js and Tailwind CSS" required />
+                  <Label htmlFor="scheduleLearningGoal">Primary Learning Goal for this Schedule</Label>
+                  {allUserGoals.length > 0 ? (
+                    <Select 
+                        value={selectedScheduleGoalId || ''} 
+                        onValueChange={handleScheduleGoalChange}
+                        required
+                    >
+                        <SelectTrigger id="scheduleLearningGoal">
+                            <SelectValue placeholder="Select a learning goal" />
+                        </SelectTrigger>
+                        <SelectContent>
+                        {allUserGoals.map(goal => (
+                            <SelectItem key={goal.id} value={goal.id}>
+                            {goal.title}
+                            </SelectItem>
+                        ))}
+                        </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input 
+                        id="scheduleLearningGoal" 
+                        value={scheduleGoalTitle} 
+                        onChange={(e) => setScheduleGoalTitle(e.target.value)} 
+                        placeholder="No goals created yet. Enter manually or create one on Roadmap page." 
+                        required 
+                    />
+                  )}
+                  {allUserGoals.length === 0 && <p className="text-xs text-muted-foreground mt-1">You can create and manage your main learning goals on the <Link href="/roadmap" className="underline">Roadmap page</Link>.</p>}
                 </div>
                 <div>
                   <Label htmlFor="scheduleDuration">Schedule Duration</Label>
@@ -775,7 +776,7 @@ export default function SchedulePage() {
                   </Label>
                 </div>
 
-                <Button type="submit" className="w-full" disabled={isLoadingWeeklyOutline}>
+                <Button type="submit" className="w-full" disabled={isLoadingWeeklyOutline || !scheduleGoalTitle.trim()}>
                   {isLoadingWeeklyOutline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ListChecks className="mr-2 h-4 w-4" />}
                   {isLoadingWeeklyOutline ? 'Generating Outline...' : (storedScheduleData?.weeklyOutline?.length > 0 ? 'Regenerate Weekly Outline' : 'Generate Weekly Outline')}
                 </Button>
