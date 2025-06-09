@@ -298,7 +298,7 @@ export default function DashboardPage() {
                 Get Started for Free <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-            <div className="mt-12 md:mt-16">
+            <div className="mt-12 md:mt-16 max-md:hidden">
               <motion.div
                 ref={containerRef}                       // ← attach ref here
                 className="mt-16 overflow-x-hidden relative"
