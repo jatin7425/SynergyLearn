@@ -20,6 +20,7 @@ import {
   LifeBuoy, 
   ShieldCheck, 
   UserCog,
+  ListOrdered, // For Audit Logs
 } from 'lucide-react';
 import {
   SidebarMenuItem,
@@ -29,9 +30,8 @@ import {
   SidebarMenuSubButton,
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth } from '@/contexts/AuthContext';
 
-// Define the admin UID here or import from a shared config
 const ADMIN_UID = 'Mcjp0wyJVcal3ocfav9aMOHzNzV2';
 
 const navItemsBase = [
@@ -63,13 +63,14 @@ const adminNavItems = [
     subItems: [
         { href: '/admin/model-settings', label: 'Model Settings', icon: Sparkles },
         { href: '/admin/user-management', label: 'User Management', icon: UserCog },
+        { href: '/admin/audit-logs', label: 'Audit Logs', icon: ListOrdered }, // New audit log link
     ],
   }
 ];
 
 export default function SidebarNav() {
   const pathname = usePathname();
-  const { user } = useAuth(); // Get current user from AuthContext
+  const { user } = useAuth(); 
 
   const currentNavItems = user?.uid === ADMIN_UID ? [...navItemsBase, ...adminNavItems] : navItemsBase;
 

@@ -4,7 +4,7 @@
 import PageHeader from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PlusCircle, Users, LogIn, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, Users, LogIn, Loader2, AlertCircle, Eye, Lock } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState, type FormEvent, useEffect } from 'react';
@@ -26,6 +26,8 @@ import { Label } from '@/components/ui/label';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
 import type { FirebaseError } from 'firebase/app';
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { cn } from '@/lib/utils';
 
 interface Member {
   uid: string;
@@ -38,12 +40,13 @@ interface StudyRoom {
   id: string; // Firestore document ID
   name: string;
   topic: string;
+  visibility: 'public' | 'private'; // Added visibility
   memberCount: number;
   members: Member[];
   createdBy: string; // User UID
   createdAt: Timestamp;
   updatedAt?: Timestamp;
-  whiteboardDrawing?: WhiteboardPath[]; // Added for whiteboard
+  whiteboardDrawing?: WhiteboardPath[];
 }
 
 // Define WhiteboardPath if not already globally available, or import
@@ -71,6 +74,7 @@ export default function StudyRoomsPage() {
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomTopic, setNewRoomTopic] = useState('');
+  const [newRoomVisibility, setNewRoomVisibility] = useState<'public' | 'private'>('public');
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -132,6 +136,7 @@ export default function StudyRoomsPage() {
     const newRoomData = {
       name: trimmedName,
       topic: trimmedTopic,
+      visibility: newRoomVisibility, // Add visibility
       memberCount: 1, 
       members: [{ 
           uid: user.uid,
@@ -142,7 +147,7 @@ export default function StudyRoomsPage() {
       createdBy: user.uid, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      whiteboardDrawing: [], // Initialize whiteboard data
+      whiteboardDrawing: [], 
     };
 
     try {
@@ -151,6 +156,7 @@ export default function StudyRoomsPage() {
       toast({ title: "Room Created!", description: `"${newRoomData.name}" is now active.` });
       setNewRoomName('');
       setNewRoomTopic('');
+      setNewRoomVisibility('public'); // Reset visibility for next creation
       setShowCreateRoomDialog(false);
       router.push(`/study-rooms/${docRef.id}`);
     } catch (error) {
@@ -251,6 +257,24 @@ export default function StudyRoomsPage() {
                       maxLength={MAX_ROOM_TOPIC_LENGTH}
                     />
                   </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label className="text-right">Visibility</Label>
+                    <RadioGroup
+                      defaultValue="public"
+                      onValueChange={(value: 'public' | 'private') => setNewRoomVisibility(value)}
+                      className="col-span-3 flex gap-4"
+                      disabled={isCreatingRoom}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="public" id="visibility-public" />
+                        <Label htmlFor="visibility-public" className="font-normal">Public</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="private" id="visibility-private" />
+                        <Label htmlFor="visibility-private" className="font-normal">Private</Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
                 </div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={isCreatingRoom}>Cancel</Button></DialogClose>
@@ -292,10 +316,19 @@ export default function StudyRoomsPage() {
               lastActiveDisplay = room.createdAt.toDate().toLocaleString();
             }
 
+            const VisibilityIcon = room.visibility === 'private' ? Lock : Eye;
+            const visibilityText = room.visibility === 'private' ? 'Private' : 'Public';
+
             return (
               <Card key={room.id} className="flex flex-col">
                 <CardHeader>
-                  <CardTitle>{room.name || "Unnamed Room"}</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>{room.name || "Unnamed Room"}</CardTitle>
+                    <div className="flex items-center text-xs text-muted-foreground" title={visibilityText}>
+                      <VisibilityIcon className="mr-1 h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">{visibilityText}</span>
+                    </div>
+                  </div>
                   <CardDescription>Topic: {room.topic || "No Topic"}</CardDescription>
                 </CardHeader>
                 <CardContent className="flex-grow">
@@ -312,7 +345,7 @@ export default function StudyRoomsPage() {
                 </CardContent>
                 <CardContent className="border-t pt-4 flex justify-between">
                   <Link href={`/study-rooms/${room.id}`} passHref>
-                    <Button>
+                    <Button className={cn(room.visibility === 'private' ? "bg-accent hover:bg-accent/90" : "")}>
                       <LogIn className="mr-2 h-4 w-4" /> Join Room
                     </Button>
                   </Link>
@@ -325,4 +358,3 @@ export default function StudyRoomsPage() {
     </div>
   );
 }
-
