@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toaster';
 // Removed MainLayout and SidebarProvider imports
 import { AuthProvider } from '@/contexts/AuthContext';
 import ConditionalLayout from './conditional-layout'; // Import the new ConditionalLayout
+import { Analytics } from "@vercel/analytics/next"
 
 export const metadata: Metadata = {
   title: 'SynergyLearn',
@@ -29,6 +30,7 @@ export default function RootLayout({
           <ConditionalLayout>{children}</ConditionalLayout>
           <Toaster />
         </AuthProvider>
+        <Analytics/>
       </body>
     </html>
   );
