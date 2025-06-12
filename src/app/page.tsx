@@ -295,7 +295,7 @@ export default function DashboardPage() {
         </nav>
 
         <section className="py-16 md:py-24 lg:py-32 bg-gradient-to-br from-primary/10 via-background to-background">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold font-headline text-foreground mb-6">
               Organize Your Learning Journey, <span className="text-primary">Effortlessly</span>.
             </h1>
@@ -307,7 +307,7 @@ export default function DashboardPage() {
                 Get Started for Free <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-            <div className="mt-12 md:mt-16 max-md:hidden">
+            <div className="mt-12 md:mt-16 w-[95vw] max-md:hidden overflow-y-hidden">
               <motion.div
                 ref={containerRef}                     
                 className="mt-16 overflow-x-hidden relative"

@@ -20,10 +20,10 @@ import { MainAppLogo } from '@/components/common/logo';
 export default function MainLayout({ children }: PropsWithChildren) {
   const { isMobile, openMobile, setOpenMobile, state } = useSidebar();
 
-  const headerLeftOffset = isMobile 
-    ? '0px' 
-    : state === 'expanded' 
-      ? 'var(--sidebar-width)' 
+  const headerLeftOffset = isMobile
+    ? '0px'
+    : state === 'expanded'
+      ? 'var(--sidebar-width)'
       : 'var(--sidebar-width-icon)';
 
   return (
@@ -43,7 +43,7 @@ export default function MainLayout({ children }: PropsWithChildren) {
       </Sidebar>
 
       <SidebarInset className="flex flex-col">
-        <header 
+        <header
           className="fixed top-0 right-0 z-40 flex h-16 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-md md:px-6"
           style={{ left: headerLeftOffset }}
         >
@@ -59,12 +59,14 @@ export default function MainLayout({ children }: PropsWithChildren) {
                 <span className="sr-only">Toggle Menu</span>
               </Button>
             )}
-             {/* Placeholder for breadcrumbs or page title if needed */}
+            {/* Placeholder for breadcrumbs or page title if needed */}
           </div>
           <UserNav />
         </header>
-        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6 pt-24"> {/* Increased pt from 16 to 24 for h-16 header */}
-          {children}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6">
+          <div className='w-full mt-16'>
+            {children}
+          </div>
         </main>
       </SidebarInset>
     </>
