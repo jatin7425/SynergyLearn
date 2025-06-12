@@ -63,7 +63,7 @@ export default function MainLayout({ children }: PropsWithChildren) {
           </div>
           <UserNav />
         </header>
-        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6 pt-20"> {/* Increased pt from 16 to 20 for h-16 header */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 md:p-6 pt-24"> {/* Increased pt from 16 to 24 for h-16 header */}
           {children}
         </main>
       </SidebarInset>
